@@ -9,3 +9,6 @@ STM https://github.com/orest-d/p4vasp 提交 1fbd85e52f1e56f1d096934dc6aaa37bebf
 - Gwyddion实验SPM色标设计 https://www.gwyddion.net/documentation/user-guide-en/color-map.html
 - PyQtGraph GLMeshItem GPU网格 https://pyqtgraph.readthedocs.io/en/latest/api_reference/3dgraphics/glmeshitem.html
 - STM信号距离指数关系 https://www.nanophys.kth.se/nanolab/afm/icon/bruker-help/Content/STM/Scanning%20Tunneling%20Microscopy%20%28STM%29.htm
+
+- 本地crystalX元素样式 E:/我的文件/personal-lib/crystalX/config/default/VESTA.ovito-theme；src/crystalx/ui.py使用其元素配色。
+- VASP表面slab与真空准备 https://vasp.at/tutorials/latest/surface/part1/

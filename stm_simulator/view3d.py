@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QVector3D, QFont, QPainter, QColor, QMatrix4x4
 import pyqtgraph.opengl as gl
+from .elements import atom_styles
 
 
 class AxisLabels(QWidget):
@@ -17,7 +18,7 @@ class AxisLabels(QWidget):
 
     def paintEvent(self, event):
         view = self.view
-        if not view.axis_labels:
+        if not view.axis_labels and not view.atom_labels:
             return
         viewport = view.getViewport()
         screen = QMatrix4x4()
@@ -40,6 +41,23 @@ class AxisLabels(QWidget):
                     occupied.append(rect)
                     break
             painter.drawText(x, y, text)
+        if view.show_atom_labels and view.atom_labels:
+            pixel_sizes = np.asarray(view.pixelSize(view.atom_positions))
+            for index, (position, text) in enumerate(view.atom_labels):
+                point = transform.map(QVector3D(*position))
+                if not (-1 <= point.z() <= 1 and 0 <= point.x() < self.width() and 0 <= point.y() < self.height()):
+                    continue
+                radius = view.atom_radii[index] / max(float(pixel_sizes[index]), 1e-9)
+                text_width = metrics.horizontalAdvance(text)
+                x = int(point.x()+radius+4)
+                if x+text_width+3 > self.width():
+                    x = int(point.x()-radius-text_width-4)
+                x = max(2, x)
+                y = int(np.clip(point.y()-radius-3, metrics.height(), self.height()-3))
+                rect = QRect(x-2, y-metrics.ascent()-2, metrics.horizontalAdvance(text)+6, metrics.height()+2)
+                painter.fillRect(rect, QColor(20, 20, 20, 190))
+                painter.setPen(QColor("#ffffff"))
+                painter.drawText(x, y, text)
         painter.end()
 
 
@@ -50,6 +68,8 @@ class SurfaceView(gl.GLViewWidget):
         self.setBackgroundColor("#222222")
         self.atom_artist = None
         self.show_atoms = True
+        self.show_atom_labels = False
+        self.atom_labels = []
         self.surface_item = None
         self._fitted = False
         self.axis_labels = []
@@ -64,6 +84,7 @@ class SurfaceView(gl.GLViewWidget):
         self.surface_item = None
         self._fitted = False
         self.axis_labels = []
+        self.atom_labels = []
         self.update()
 
     def set_atoms_visible(self, visible):
@@ -71,6 +92,10 @@ class SurfaceView(gl.GLViewWidget):
         if self.atom_artist is not None:
             self.atom_artist.setVisible(visible)
         self.update()
+
+    def set_atom_labels_visible(self, visible):
+        self.show_atom_labels = visible
+        self.labels_overlay.update()
 
     def set_data(self, result, volume, plane_height, color_scale):
         fitted = self._fitted
@@ -97,9 +122,11 @@ class SurfaceView(gl.GLViewWidget):
         # Both objects use physical Cartesian coordinates, with one shared view
         # transform and no independent z stretch or implicit periodic translation.
         self.atom_positions = volume.positions @ volume.lattice
+        elements, self.atom_colors, self.atom_radii = atom_styles(volume)
+        self.atom_labels = list(zip(self.atom_positions, elements))
         self.atom_artist = gl.GLScatterPlotItem(pos=self.atom_positions.astype(np.float32),
-                                               color=(.85, .85, .85, 1), size=7,
-                                               pxMode=True, glOptions="opaque")
+                                               color=self.atom_colors, size=self.atom_radii*2,
+                                               pxMode=False, glOptions="opaque")
         self.atom_artist.setVisible(self.show_atoms)
         self.addItem(self.atom_artist)
         points = np.concatenate((self.surface_vertices[valid], self.atom_positions))

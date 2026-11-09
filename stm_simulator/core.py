@@ -11,6 +11,7 @@ class Volume:
     positions: np.ndarray
     values: np.ndarray
     name: str
+    elements: tuple[str, ...] = ()
 
     @property
     def cell_volume(self):
@@ -37,9 +38,16 @@ def read_parchg(path, progress=None):
             lattice *= scales
             cart_scale = scales
         line = stream.readline().split()
+        symbols = None
         if not all(token.isdigit() for token in line):
+            symbols = line
             line = stream.readline().split()
         counts = [int(token) for token in line]
+        if not counts or (symbols is not None and len(symbols) != len(counts)):
+            raise ValueError("Element names and atom counts do not match")
+        if symbols is None:
+            symbols = [f"X{i+1}" for i in range(len(counts))]
+        elements = tuple(symbol for symbol, count in zip(symbols, counts) for _ in range(count))
         mode = stream.readline().strip()
         if mode.lower().startswith("s"):
             mode = stream.readline().strip()
@@ -82,7 +90,7 @@ def read_parchg(path, progress=None):
         raise ValueError("Density contains non-finite values")
     if progress:
         progress(100)
-    return Volume(lattice, positions, values.reshape(shape, order="F"), name)
+    return Volume(lattice, positions, values.reshape(shape, order="F"), name, elements)
 
 
 def simulate(volume, mode="current", height=4., threshold=0.001,

@@ -26,6 +26,23 @@ class CoordinateTests(unittest.TestCase):
             self.assertTrue(view.atom_artist.transform().isIdentity())
         view.close()
 
+    def test_element_styles_and_independent_labels(self):
+        volume = Volume(np.diag([12., 12., 24.]), np.array([[.2, .3, .4], [.8, .7, .4]]),
+                        np.zeros((2, 2, 2)), "test", ("H", "Fe"))
+        view = SurfaceView()
+        view.set_data(np.array([[12., 13.], [13., 14.]]), volume, None, ColorScale(12., 14.))
+        self.assertNotEqual(view.atom_radii[0], view.atom_radii[1])
+        self.assertFalse(np.array_equal(view.atom_colors[0], view.atom_colors[1]))
+        self.assertEqual([text for _, text in view.atom_labels], ["H", "Fe"])
+        view.set_atom_labels_visible(True)
+        self.assertTrue(view.show_atom_labels)
+        view.set_atoms_visible(False)
+        self.assertTrue(view.show_atom_labels)
+        self.assertFalse(view.atom_artist.visible())
+        view.clear()
+        self.assertEqual(view.atom_labels, [])
+        view.close()
+
     def test_missing_vertices_do_not_form_faces_and_camera_is_preserved(self):
         volume = Volume(np.diag([12., 12., 24.]), np.array([[.5, .5, .4]]), np.zeros((2, 2, 2)), "test")
         result = np.array([[1., 2., 3.], [2., np.nan, 4.], [3., 4., 5.]])

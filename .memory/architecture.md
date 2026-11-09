@@ -10,3 +10,5 @@ read_parchg 支持 progress 回调，2048行分批解析，进度通过独立队
 .settings.ini (QSettings IniFormat) 记忆最近成功文件和打开目录，启动自动恢复。恒流/恒高滑条250ms防抖更新双图，忙碌时延后。native_backend.py 用ctypes调用native/stm_native.cpp，build_native.py通过MinGW g++编译静态运行库链接的DLL，DLL缺失时自动回退NumPy。
 
 colors.py 统一二维/三维/色条的线性RGBA映射、配色、数值范围及相对高度标注。曲面和原子采用实际笛卡尔Å坐标，三维网格最多160×160，单一相机等比例变换。PNG导出使用图像控件快照包含色条。
+
+Volume.elements为按原子顺序展开的元素元组，旧调用默认空元组兼容。VASP4计数格式保留X1/X2类型分组。elements.py读取element_styles.json，来自crystalX的VESTA主题。GLScatterPlotItem采用逐原子颜色和世界坐标显示直径2r，Qt标签叠层显示元素名，开关与原子可见性独立。

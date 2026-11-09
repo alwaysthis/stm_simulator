@@ -15,8 +15,19 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(progress[0], 0)
             self.assertEqual(progress[-1], 100)
             self.assertEqual(progress, sorted(progress))
+        self.assertEqual(volume.elements, ("H",))
         self.assertEqual(volume.values[1,0,1], 5)
         self.assertEqual(volume.values[0,1,0], 2)
+
+    def test_element_counts_and_vasp4_unknown_types(self):
+        header = "test\n1\n2 0 0\n0 2 0\n0 0 10\n"
+        tail = "2 1\nDirect\n0 0 .4\n.5 .5 .4\n.5 0 .5\n\n1 1 2\n0 1\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"PARCHG"
+            path.write_text(header + "Fe O\n" + tail)
+            self.assertEqual(read_parchg(path).elements, ("Fe", "Fe", "O"))
+            path.write_text(header + tail)
+            self.assertEqual(read_parchg(path).elements, ("X1", "X1", "X2"))
 
     def test_chunked_read_and_truncated_density(self):
         values = np.arange(15000, dtype=float)
