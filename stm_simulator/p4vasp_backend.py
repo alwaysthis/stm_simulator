@@ -3,6 +3,7 @@
 # Original p4vasp Copyright (C) 2003 Orest Dubay.
 """Periodic constant-current search matching p4vasp's linear mode."""
 import numpy as np
+from . import native_backend
 
 def constant_current(data, cell_height, threshold, direction=-1, start=None):
     """Auto-start at minimum plane-averaged density, search one periodic cell.
@@ -13,6 +14,8 @@ def constant_current(data, cell_height, threshold, direction=-1, start=None):
     nz = data.shape[2]
     start = int(np.argmin(data.mean(axis=(0, 1)))) if start is None else int(start)
     step = -1 if direction <= 0 else 1
+    if native_backend.AVAILABLE:
+        return native_backend.constant_current(data, cell_height, threshold, step, start)
     result = np.full(data.shape[:2], np.nan)
     count = nz+1 if step < 0 else nz
     for offset in range(count):

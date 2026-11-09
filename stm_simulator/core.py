@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from .native_backend import parse_density
 
 @dataclass
 class Volume:
@@ -70,7 +71,7 @@ def read_parchg(path, progress=None):
                 token_count += len(line.split())
             if offset + token_count > size:
                 raise ValueError("Too many values in density block")
-            chunk = np.fromstring(" ".join(lines).replace("D", "E").replace("d", "e"), sep=" ")
+            chunk = parse_density(" ".join(lines), token_count)
             if len(chunk) != token_count:
                 raise ValueError("Invalid density value")
             values[offset:offset + len(chunk)] = chunk

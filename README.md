@@ -11,7 +11,7 @@ python run.py
 
 Windows 双击 `start.vbs` 无控制台启动，失败时查看 `startup-error.log`。
 
-Python 3.10+，需要 PyQt6、NumPy、SciPy。点击“打开文件”载入 PARCHG，设置参数后运行模拟。
+Python 3.10+，需要 PyQt6、NumPy、SciPy、Matplotlib。点击“打开文件”载入 PARCHG，设置参数后运行模拟。
 
 ## 模型
 
@@ -26,7 +26,7 @@ Tersoff–Hamann 近似，以所选偏压能窗的部分密度作为电流代理
 - https://github.com/orest-d/p4vasp
 - https://vasp.at/wiki/Partial_charge_densities_and_STM_simulations
 
-UI 依据参考项目 experiment/rheed-spot-viewer 分支的 tools/mbe_panel 控制面板样式独立编写，采用中性深灰、蓝色强调、工作区标签、右侧紧凑参数与底部日志。参考 https://github.com/zaxoniu/clc_mbe/tree/experiment/rheed-spot-viewer 。
+UI 依据参考项目 experiment/rheed-spot-viewer 分支的 tools/mbe_panel 控制面板样式独立编写，采用中性深灰、蓝色强调和右侧紧凑参数。参考 https://github.com/zaxoniu/clc_mbe/tree/experiment/rheed-spot-viewer 。
 
 ## 验证
 
@@ -37,7 +37,7 @@ python -m unittest discover -s tests -v
 
 ## Qt UI 与 p4vasp 移植
 
-界面改为 PyQt6，移除底部日志，采用参考控制面板的 8px 面板圆角、4px 卡片圆角、10px 标签顶角与中性深灰配色。
+界面改为 PyQt6，移除底部日志，采用参考控制面板的 8px 面板圆角、4px 卡片圆角与中性深灰配色。
 
 默认恒流引擎是 p4vasp 线性移植，保留最低平均密度层起点、周期边界与首次达到阈值规则。无交点用 NaN，未移植三次模式。完整出处与许可证见 THIRD_PARTY.md。限定真空引擎仍可选择。
 
@@ -45,6 +45,21 @@ python -m unittest discover -s tests -v
 
 ## 双视图与参数
 
-左侧二维图和右侧可旋转三维图由同一次模拟同步更新。三维图可勾选显示原子。恒流模式调整“目标信号 / 原始密度”，恒高模式调整“距外层原子 / Å”，点击“运行模拟”更新两图。恒高三维图使用实际截面高度，密度由颜色表示。三维绘制最多采用120×120采样点，计算和导出保持原始分辨率。
+左侧二维图和右侧可旋转三维图由同一次模拟同步更新。三维图可勾选显示原子。恒流模式调整“目标信号 / 原始密度”，恒高模式调整“距外层原子 / Å”，拖动滑条或修改对应数值后自动更新两图，也可点击“运行模拟”。恒高三维图使用实际截面高度，密度由颜色表示。三维绘制最多采用120×120采样点，计算和导出保持原始分辨率。
 
 导入时显示密度网格读取进度。原子为文件中的位置，在p4vasp周期展开高度分支附近显示最近的整胞周期副本。原子统一用灰色标记。
+
+## 目录与拖拽调节
+
+打开文件的目录和最近成功载入的文件保存在项目目录 `.settings.ini`，下次启动自动载入该文件。二维与三维初始宽度约3∶1，可拖动中间分隔条修改。
+恒流滑条采用对数刻度，范围根据数据密度确定。恒高滑条采用线性刻度，范围为所选表面到晶胞边界的可用高度。数值框允许精确输入，修改信号/高度后约250毫秒自动重算，计算期间的后续调节会在任务完成后处理。
+
+## C++ 加速
+
+`native/stm_native.cpp` 实现密度文本解析和 p4vasp 线性恒流搜索，通过 ctypes 调用。Windows 下使用 MinGW-w64 的 g++ 构建，无需 Python 开发头文件。
+
+```sh
+python build_native.py
+```
+
+构建生成 `stm_simulator/_stm_native.dll`，重启后自动启用。本地二进制和个人设置不提交到仓库，在其他机器拉取源码后需要运行构建脚本。缺少本地库时自动使用 NumPy 实现。恒高插值、限定真空算法和平滑采用原实现。

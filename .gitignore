@@ -5,3 +5,6 @@ PARCHG*
 CHGCAR*
 WAVECAR*
 *.log
+
+.settings.ini
+_stm_native.*
