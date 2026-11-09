@@ -7,9 +7,10 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
-    QSplitter, QFileDialog, QMessageBox, QScrollArea)
+    QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar)
 from .core import read_parchg, simulate
 from .widgets import ChevronComboBox, NumericBox
+from .view3d import SurfaceView
 
 STYLE = """
 QMainWindow, QWidget {background:#242424;color:#ffffff;font-family:'Microsoft YaHei UI';font-size:13px;}
@@ -38,6 +39,8 @@ QScrollArea {border:none;background:transparent;}
 QScrollBar:vertical {background:transparent;width:6px;}
 QScrollBar::handle:vertical {background:#4a4a4a;border-radius:3px;min-height:25px;}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {height:0;}
+QProgressBar {border:1px solid #3a3a3a;border-radius:4px;text-align:center;min-height:18px;}
+QProgressBar::chunk {background:#3d6a9a;border-radius:3px;}
 QSplitter::handle {background:#242424;width:8px;}
 """
 
@@ -105,6 +108,7 @@ class App(QMainWindow):
         self.volume=self.result=None
         self.busy=False
         self.jobs=queue.Queue()
+        self.progress_updates=queue.Queue()
         self.timer=QTimer(self);self.timer.timeout.connect(self.poll);self.timer.start(50)
         root=QWidget();self.setCentralWidget(root)
         layout=QVBoxLayout(root);layout.setContentsMargins(8,6,8,6);layout.setSpacing(8)
@@ -120,7 +124,35 @@ class App(QMainWindow):
         view_layout=QVBoxLayout(view);view_layout.setContentsMargins(24,10,24,10)
         self.summary=QLabel("等待数据");self.summary.setObjectName("muted");view_layout.addWidget(self.summary)
         self.readout=QLabel("x  —     y  —     值  —");self.readout.setObjectName("muted")
-        self.image=ImageView(self.readout);view_layout.addWidget(self.image,1);view_layout.addWidget(self.readout)
+        plots = QSplitter()
+        map_panel = QWidget()
+        map_layout = QVBoxLayout(map_panel)
+        map_layout.setContentsMargins(0, 0, 0, 0)
+        map_layout.addWidget(QLabel("二维 STM"))
+        self.image = ImageView(self.readout)
+        self.image.setMinimumWidth(240)
+        map_layout.addWidget(self.image, 1)
+        map_layout.addWidget(self.readout)
+        plots.addWidget(map_panel)
+        surface_panel = QWidget()
+        surface_layout = QVBoxLayout(surface_panel)
+        surface_layout.setContentsMargins(0, 0, 0, 0)
+        surface_header = QHBoxLayout()
+        surface_header.addWidget(QLabel("三维 STM"))
+        surface_header.addStretch()
+        self.atoms_toggle = QCheckBox("显示原子")
+        self.atoms_toggle.setChecked(True)
+        surface_header.addWidget(self.atoms_toggle)
+        surface_layout.addLayout(surface_header)
+        self.surface = SurfaceView()
+        self.atoms_toggle.toggled.connect(self.surface.set_atoms_visible)
+        surface_layout.addWidget(self.surface, 1)
+        surface_hint = QLabel("拖动旋转 · 滚轮缩放")
+        surface_hint.setObjectName("muted")
+        surface_layout.addWidget(surface_hint)
+        plots.addWidget(surface_panel)
+        plots.setSizes([450, 450])
+        view_layout.addWidget(plots, 1)
         split.addWidget(view)
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setMinimumWidth(290);scroll.setMaximumWidth(360)
         panel=QFrame();panel.setObjectName("panel");scroll.setWidget(panel);split.addWidget(scroll);split.setSizes([900,300])
@@ -132,17 +164,22 @@ class App(QMainWindow):
         self.mode=self.combo(form,"扫描模式",["恒流","恒高"])
         self.engine=self.combo(form,"搜索算法",["p4vasp 线性","限定真空 · 线性"])
         self.side=self.combo(form,"扫描表面",["上表面 / −c","下表面 / +c"])
-        self.threshold=self.entry(form,"等密度阈值","0.001");self.threshold.setRange(1e-10,1e12);self.threshold.setSingleStep(.0001)
+        self.threshold=self.entry(form,"目标信号 / 原始密度","0.001");self.threshold.setRange(1e-10,1e12);self.threshold.setSingleStep(.0001)
+        self.threshold.setToolTip("恒流目标信号。固定偏压下，阈值越大通常越靠近表面。使用 PARCHG 原始单位。")
         self.height=self.entry(form,"距外层原子 / Å","4.0");self.height.setSingleStep(.1)
+        self.height.setToolTip("恒高截面到所选表面最外层原子的距离，单位 Å。")
         self.sigma=self.entry(form,"平滑 / 网格 σ","0")
         bounds=self.card(controls,"限定真空范围 · 留空自动")
         self.zmin=self.entry(bounds,"z 下界 / Å","");self.zmax=self.entry(bounds,"z 上界 / Å","")
         self.engine.currentIndexChanged.connect(self.sync_controls);self.mode.currentIndexChanged.connect(self.sync_controls)
         self.sync_controls();controls.addStretch()
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        layout.addWidget(self.progress)
         self.status=QLabel("就绪    ·    PARCHG 原始密度单位");self.status.setObjectName("muted");layout.addWidget(self.status)
 
     def show_help(self):
-        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。")
+        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。\n\n调节参数后点击运行模拟，二维与三维图同步更新。\n恒流调整目标信号，恒高调整距外层原子的距离。\n三维图拖动旋转、滚轮缩放，勾选显示原子。")
 
     def card(self,parent,title):
         frame=QFrame();frame.setObjectName("card");box=QVBoxLayout(frame);box.setContentsMargins(10,10,10,10)
@@ -167,15 +204,21 @@ class App(QMainWindow):
     def background(self,operation,callback):
         if self.busy:return
         self.busy=True;self.run_button.setEnabled(False);self.status.setText("正在处理…")
+        self.progress.setRange(0, 0);self.progress.setVisible(True)
         def worker():
             try:self.jobs.put((callback,operation(),None))
             except Exception as error:self.jobs.put((callback,None,str(error)))
         threading.Thread(target=worker,daemon=True).start()
 
     def poll(self):
+        while not self.progress_updates.empty():
+            value = self.progress_updates.get_nowait()
+            self.progress.setRange(0, 100)
+            self.progress.setValue(value)
         try:callback,value,error=self.jobs.get_nowait()
         except queue.Empty:return
         self.busy=False;self.run_button.setEnabled(True)
+        self.progress.setVisible(False)
         if error:
             self.status.setText(error);QMessageBox.warning(self,"STM Simulator",error)
         else:callback(value)
@@ -183,11 +226,13 @@ class App(QMainWindow):
     def open_file(self):
         if self.busy:return
         path,_=QFileDialog.getOpenFileName(self,"选择 PARCHG","","VASP volume (PARCHG* CHGCAR*);;All files (*)")
-        if path:self.background(lambda:read_parchg(path),self.loaded)
+        if path:self.background(lambda:read_parchg(path, self.progress_updates.put),self.loaded)
 
     def loaded(self,volume):
         self.volume=volume;self.result=None;self.image.image=None;self.image.update()
         self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
+        self.surface.clear()
+        self.readout.setText("x  —     y  —     值  —")
         self.summary.setText("等待模拟");self.status.setText("已载入第一数据块 · 总部分密度")
 
     def run(self):
@@ -199,6 +244,7 @@ class App(QMainWindow):
             parameters=dict(mode="current" if self.mode.currentIndex()==0 else "height",engine="bounded" if bounded else "p4vasp",side="top" if self.side.currentIndex()==0 else "bottom",threshold=float(self.threshold.text()),height=float(self.height.text()),sigma=float(self.sigma.text()),z_min=float(self.zmin.text()) if bounded and self.zmin.text().strip() else None,z_max=float(self.zmax.text()) if bounded and self.zmax.text().strip() else None)
         except ValueError:
             QMessageBox.warning(self,"参数","请输入有效数值");return
+        self.run_button.setFocus()
         volume=self.volume
         self.background(lambda:simulate(volume,**parameters),lambda output:self.calculated(output,parameters))
 
@@ -206,11 +252,12 @@ class App(QMainWindow):
         self.result,self.plane_height=output;self.parameters=parameters
         finite=self.result[np.isfinite(self.result)]
         if not finite.size:
-            self.result=None;self.image.image=None;self.image.update();self.status.setText("没有交点，请调整阈值或范围");return
+            self.result=None;self.image.image=None;self.image.update();self.surface.clear();self.status.setText("没有交点，请调整阈值或范围");return
         self.unit="Å" if parameters["mode"]=="current" else "raw density"
-        self.summary.setText(f"{self.mode.currentText()}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
+        self.summary.setText(f"{'恒流' if parameters['mode'] == 'current' else '恒高'}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
         self.status.setText(f"完成    ·    起伏 {np.ptp(finite):.5g} {self.unit}    ·    无交点 {100*np.isnan(self.result).mean():.1f}%")
         self.image.set_data(self.result,self.volume.lattice,self.unit)
+        self.surface.set_data(self.result, self.volume, self.plane_height)
 
     def export_data(self):
         if self.result is None:return

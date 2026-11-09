@@ -16,7 +16,7 @@ class Volume:
         return abs(np.linalg.det(self.lattice))
 
 
-def read_parchg(path):
+def read_parchg(path, progress=None):
     """Read the first (total-density) block. Preserve VASP's raw normalization."""
     with open(path, encoding="utf-8", errors="replace") as stream:
         name = stream.readline().strip()
@@ -57,17 +57,30 @@ def read_parchg(path):
         size = int(np.prod(shape))
         values = np.empty(size)
         offset = 0
+        if progress:
+            progress(0)
         while offset < size:
-            line = stream.readline()
-            if not line:
-                raise ValueError("Incomplete density block")
-            chunk = np.fromstring(line.replace("D", "E").replace("d", "e"), sep=" ")
-            if offset + len(chunk) > size:
+            lines = []
+            token_count = 0
+            while len(lines) < 2048 and offset + token_count < size:
+                line = stream.readline()
+                if not line:
+                    raise ValueError("Incomplete density block")
+                lines.append(line)
+                token_count += len(line.split())
+            if offset + token_count > size:
                 raise ValueError("Too many values in density block")
+            chunk = np.fromstring(" ".join(lines).replace("D", "E").replace("d", "e"), sep=" ")
+            if len(chunk) != token_count:
+                raise ValueError("Invalid density value")
             values[offset:offset + len(chunk)] = chunk
             offset += len(chunk)
+            if progress:
+                progress(min(99, int(offset * 100 / size)))
     if not np.isfinite(values).all():
         raise ValueError("Density contains non-finite values")
+    if progress:
+        progress(100)
     return Volume(lattice, positions, values.reshape(shape, order="F"), name)
 
 

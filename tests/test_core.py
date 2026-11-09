@@ -10,9 +10,30 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/"PARCHG"
             path.write_text(text)
-            volume = read_parchg(path)
+            progress = []
+            volume = read_parchg(path, progress.append)
+            self.assertEqual(progress[0], 0)
+            self.assertEqual(progress[-1], 100)
+            self.assertEqual(progress, sorted(progress))
         self.assertEqual(volume.values[1,0,1], 5)
         self.assertEqual(volume.values[0,1,0], 2)
+
+    def test_chunked_read_and_truncated_density(self):
+        values = np.arange(15000, dtype=float)
+        header = "test\n1\n2 0 0\n0 2 0\n0 0 10\nH\n1\nDirect\n.5 .5 .5\n\n10 10 150\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"PARCHG"
+            with path.open("w") as stream:
+                stream.write(header)
+                np.savetxt(stream, values.reshape(-1, 5), fmt="%.1E")
+            progress = []
+            volume = read_parchg(path, progress.append)
+            expected = np.array([float(f"{v:.1E}") for v in values])
+            np.testing.assert_array_equal(volume.values.ravel(order="F"), expected)
+            self.assertGreater(len(progress), 3)
+            path.write_text(header + "1 2 3\n")
+            with self.assertRaisesRegex(ValueError, "Incomplete"):
+                read_parchg(path)
 
     def test_top_bottom_and_missing_crossings(self):
         z = np.arange(201)*20/201
