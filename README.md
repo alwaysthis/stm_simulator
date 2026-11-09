@@ -11,17 +11,17 @@ python run.py
 
 Windows 双击 `start.vbs` 无控制台启动，失败时查看 `startup-error.log`。
 
-Python 3.10+，需要 tkinter（Windows 官方 Python 自带）。先点击“载入演示”验证界面，再打开 PARCHG。
+Python 3.10+，需要 PyQt6、NumPy、SciPy。先点击“载入演示”验证界面，再打开 PARCHG。
 
 ## 模型
 
 Tersoff–Hamann 近似，以所选偏压能窗的部分密度作为电流代理。偏压能窗应在 VASP 的 EINT 中指定。程序保留原始 PARCHG 数值，阈值不标定为 pA/nA。读取第一数据块，即共线自旋计算的总密度。文件不保存原始波函数相位。
 
-恒高采用相邻 z 平面线性插值。恒流按选定表面从真空向原子层搜索，采用首次向上跨越阈值的交点，再线性插值。默认只搜索最外层原子之外的真空。没有交点显示为 NaN/洋红色。阈值过低/高、模型跨周期边界时，请检查或显式指定搜索范围。仅支持 a,b 位于 xy 且正 c 轴沿 z 的晶胞，支持面内非正交网格。默认关闭平滑，sigma 单位为网格间距。
+恒高采用相邻 z 平面线性插值。恒流按选定表面从真空向原子层搜索，采用首次向上跨越阈值的交点，再线性插值。限定真空模式只搜索最外层原子之外的真空。没有交点显示为 NaN/洋红色。阈值过低/高、模型跨周期边界时，请检查或显式指定搜索范围。仅支持 a,b 位于 xy 且正 c 轴沿 z 的晶胞，支持面内非正交网格。默认关闭平滑，sigma 单位为网格间距。
 
 ## 来源
 
-参考 p4vasp 的恒高切片/恒流等值面流程及 VASP 官方方法说明，本项目当前为独立实现，未复制 p4vasp 源码。
+恒流线性后端已根据 p4vasp 源码移植，原作者与 GPL 许可见 THIRD_PARTY.md。
 
 - https://github.com/orest-d/p4vasp
 - https://vasp.at/wiki/Partial_charge_densities_and_STM_simulations
@@ -33,3 +33,10 @@ UI 依据参考项目 experiment/rheed-spot-viewer 分支的 tools/mbe_panel 控
 ```sh
 python -m unittest discover -s tests -v
 ```
+
+
+## Qt UI 与 p4vasp 移植
+
+界面改为 PyQt6，移除底部日志，采用参考控制面板的 8px 面板圆角、4px 卡片圆角、10px 标签顶角与中性深灰配色。
+
+默认恒流引擎是 p4vasp 线性移植，保留最低平均密度层起点、周期边界与首次达到阈值规则。无交点用 NaN，未移植三次模式。完整出处与许可证见 THIRD_PARTY.md。限定真空引擎仍可选择。

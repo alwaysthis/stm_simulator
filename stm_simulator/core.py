@@ -72,7 +72,7 @@ def read_parchg(path):
 
 
 def simulate(volume, mode="current", height=4., threshold=0.001,
-             side="top", sigma=0., z_min=None, z_max=None):
+             side="top", sigma=0., z_min=None, z_max=None, engine="bounded"):
     """Threshold is in raw PARCHG units; heights use Cartesian angstroms.
 
     Constant-current chooses the first vacuum-to-surface upward crossing in
@@ -103,6 +103,11 @@ def simulate(volume, mode="current", height=4., threshold=0.001,
         return data[:, :, index]*(1-fraction)+data[:, :, index+1]*fraction, target
     if threshold <= 0:
         raise ValueError("Density threshold must be positive")
+    if engine == "p4vasp":
+        from .p4vasp_backend import constant_current
+        if z_min is not None or z_max is not None:
+            raise ValueError("p4vasp auto mode uses a full periodic cell; clear z bounds")
+        return constant_current(data, length, threshold, -1 if side == "top" else 1), None
     # Defaults only search the vacuum adjacent to the selected surface.
     low = atom_z.max() if side == "top" else z[0]
     high = z[-1] if side == "top" else atom_z.min()

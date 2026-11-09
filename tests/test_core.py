@@ -25,6 +25,17 @@ class CoreTests(unittest.TestCase):
         missing,_ = simulate(volume, threshold=2)
         self.assertTrue(np.isnan(missing).all())
 
+    def test_p4vasp_periodic_search_and_interpolation(self):
+        from stm_simulator.p4vasp_backend import constant_current
+        data = np.array([0., 1., 3., 1., 0., 0.])[None,None,:]
+        # p4vasp searchMinPlaneZ chooses the first minimum, index 0.
+        # Negative search wraps to 5,4,3,2 and returns an unwrapped height.
+        top = constant_current(data, 6., 2., -1)
+        bottom = constant_current(data, 6., 2., 1)
+        self.assertEqual(top[0,0], -3.5)
+        self.assertEqual(bottom[0,0], 1.5)
+        self.assertTrue(np.isnan(constant_current(data,6.,4.)).all())
+
     def test_constant_height(self):
         z = np.arange(40)*.5
         volume = Volume(np.diag([2.,2.,20.]), np.array([[.5,.5,.5]]), z[None,None,:], "linear")

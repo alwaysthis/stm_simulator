@@ -1,276 +1,231 @@
-"""Desktop control panel for STM simulation."""
+"""Qt instrument panel, styled after the clc_mbe control panel."""
+import queue
 import threading
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import numpy as np
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
+    QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
+    QTabWidget, QSplitter, QFileDialog, QMessageBox, QScrollArea)
 from .core import read_parchg, simulate, demo_volume
 
-BG, PANEL, TEXT, MUTED, ACCENT = "#242424", "#1c1c1c", "#ffffff", "#9e9e9e", "#4a90d9"
+STYLE = """
+QMainWindow, QWidget {background:#242424;color:#ffffff;font-family:'Microsoft YaHei UI';font-size:13px;}
+QFrame#panel {background:#1c1c1c;border:1px solid #303030;border-radius:8px;}
+QFrame#card {background:#1c1c1c;border:1px solid #303030;border-radius:4px;}
+QLabel {background:transparent;border:none;}
+QLabel#muted {color:#9e9e9e;}
+QPushButton {background:#4a4a4a;border:1px solid #3a3a3a;border-radius:4px;padding:6px 12px;}
+QPushButton:hover {background:#5a5a5a;border-color:#4a90d9;}
+QPushButton:pressed {background:#333333;}
+QPushButton:disabled {color:#777777;}
+QPushButton#primary {background:#3d6a9a;border-color:#4a90d9;}
+QPushButton#primary:hover {background:#4a90d9;}
+QPushButton#rail {background:transparent;border:none;border-radius:6px;padding:12px 6px;color:#9e9e9e;}
+QPushButton#rail:checked {background:#3d6a9a;color:white;}
+QLineEdit,QComboBox {background:#1e1e1e;border:1px solid #3a3a3a;border-radius:4px;padding:5px 7px;min-height:20px;selection-background-color:#4a90d9;}
+QLineEdit:focus,QComboBox:focus {border-color:#4a90d9;}
+QComboBox::drop-down {border:none;width:22px;}
+QTabWidget {background:#242424;border:none;}
+QTabWidget::pane {border:1px solid #303030;border-top:none;border-radius:8px;background:#222222;top:-1px;}
+QTabBar {background:#303030;}
+QTabBar::tab {background:transparent;color:#9e9e9e;border:none;border-top-left-radius:10px;border-top-right-radius:10px;padding:9px 22px;margin-right:3px;}
+QTabBar::tab:selected {background:#222222;color:#ffffff;}
+QTabBar::tab:hover:!selected {background:#3c3c3c;color:#ffffff;}
+QScrollArea {border:none;background:transparent;}
+QScrollBar:vertical {background:transparent;width:6px;}
+QScrollBar::handle:vertical {background:#4a4a4a;border-radius:3px;min-height:25px;}
+QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {height:0;}
+QSplitter::handle {background:#242424;width:8px;}
+"""
 
-class App(tk.Tk):
-    def __init__(self):
-        import sys
-        if sys.platform == "win32":
-            import ctypes
-            try:
-                ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-            except (AttributeError, OSError):
-                pass
+class ImageView(QWidget):
+    def __init__(self, readout):
         super().__init__()
-        self.tk.call("tk", "scaling", 4 / 3)
-        self.title("STM Simulator")
-        self.geometry("1240x860")
-        self.minsize(1000, 720)
-        self.configure(bg=BG)
-        self.volume = self.result = self.photo = None
-        self.rgb = None
-        self.busy = False
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure("TFrame", background=PANEL)
-        style.configure("TLabel", background=PANEL, foreground=TEXT, font=("Microsoft YaHei UI", 10))
-        style.configure("TButton", padding=(8, 5), background="#4a4a4a", foreground=TEXT,
-                        bordercolor="#3a3a3a", lightcolor="#4a4a4a", darkcolor="#4a4a4a", font=("Microsoft YaHei UI", 10))
-        style.map("TButton", background=[("active", "#5a5a5a"), ("pressed", "#333333")])
-        style.configure("Run.TButton", background=ACCENT)
-        style.map("Run.TButton", background=[("active", "#5b9fe5")])
-        style.configure("TEntry", fieldbackground="#1e1e1e", foreground=TEXT, padding=4, bordercolor="#3a3a3a", insertcolor=TEXT)
-        style.configure("TCombobox", fieldbackground="#1e1e1e", background="#333333", foreground=TEXT, padding=4, arrowcolor=MUTED)
-        style.map("TCombobox", fieldbackground=[("readonly", "#1e1e1e")], foreground=[("readonly", TEXT)])
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background="#303030", foreground=MUTED, padding=(16, 7), font=("Microsoft YaHei UI", 10))
-        style.map("TNotebook.Tab", background=[("selected", PANEL)], foreground=[("selected", TEXT)])
-        style.configure("TLabelframe", background=PANEL, bordercolor="#303030")
-        style.configure("TLabelframe.Label", background=PANEL, foreground=MUTED, font=("Microsoft YaHei UI", 9))
-        toolbar = tk.Frame(self, bg=BG, height=44)
-        toolbar.pack(fill="x", padx=12, pady=(7, 5))
-        tk.Label(toolbar, text="STM Simulator", bg=BG, fg=TEXT, font=("Microsoft YaHei UI", 11, "bold")).pack(side="left", padx=(0, 24))
-        ttk.Button(toolbar, text="打开文件", command=self.open_file).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="演示数据", command=self.demo).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="导出图像", command=self.export_image).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="导出数据", command=self.export_data).pack(side="left", padx=3)
-        tk.Label(toolbar, text="●  离线分析", bg=BG, fg="#83bd8b", font=("Microsoft YaHei UI", 9)).pack(side="right", padx=8)
-        body = tk.Frame(self, bg=BG)
-        body.pack(fill="both", expand=True, padx=8)
-        rail = tk.Frame(body, bg=BG, width=48)
-        rail.pack(side="left", fill="y", padx=(0, 6))
-        tk.Label(rail, text="STM", bg="#3d6a9a", fg=TEXT, padx=6, pady=12).pack(fill="x", pady=3)
-        tk.Label(rail, text="分析", bg=BG, fg=MUTED, pady=12).pack(fill="x")
-        split = tk.PanedWindow(body, orient="horizontal", bg=BG, sashwidth=6, borderwidth=0)
-        split.pack(fill="both", expand=True)
-        workspace = ttk.Notebook(split)
-        self.view = ttk.Frame(workspace)
-        workspace.add(self.view, text="STM 图像")
-        help_page = ttk.Frame(workspace, padding=20)
-        workspace.add(help_page, text="方法说明")
-        ttk.Label(help_page, text="Tersoff–Hamann 近似\n\n恒高：对三维部分密度取水平切片。\n恒流：从所选真空侧寻找首次达到阈值的高度。\n\n偏压能窗由 VASP 的 EINT 设置，需载入对应 PARCHG。\n等密度阈值沿用文件原始数值。平滑宽度以网格间距计。\n洋红色表示搜索范围内没有交点。", justify="left").pack(anchor="nw")
-        split.add(workspace, stretch="always", minsize=500)
-        controls = ttk.Frame(split, padding=12, width=286)
-        split.add(controls, stretch="never", minsize=280)
-        ttk.Label(controls, text="模拟设置", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w", pady=(0, 10))
-        self.run_button = ttk.Button(controls, text="运行模拟", style="Run.TButton", command=self.run)
-        self.run_button.pack(fill="x", pady=5)
-        source = ttk.LabelFrame(controls, text=" 数据源 ", padding=8)
-        source.pack(fill="x", pady=(0, 10))
-        self.file_label = ttk.Label(source, text="尚未载入 PARCHG", wraplength=240, foreground=MUTED)
-        self.file_label.pack(anchor="w")
-        scan = ttk.LabelFrame(controls, text=" 扫描参数 ", padding=8)
-        scan.pack(fill="x", pady=(0, 10))
-        self.mode = self.combo(scan, "扫描模式", ["恒流 / Constant current", "恒高 / Constant height"])
-        self.side = self.combo(scan, "扫描表面", ["上表面 / Top", "下表面 / Bottom"])
-        self.threshold = self.entry(scan, "等密度阈值", "0.001")
-        self.height = self.entry(scan, "针尖距外层原子  /  Å", "4.0")
-        self.sigma = self.entry(scan, "高斯平滑  /  网格 σ", "0")
-        bounds = ttk.LabelFrame(controls, text=" 搜索范围 · 留空自动 ", padding=8)
-        bounds.pack(fill="x", pady=(0, 10))
-        self.zmin = self.entry(bounds, "z 下界  /  Å", "")
-        self.zmax = self.entry(bounds, "z 上界  /  Å", "")
-        self.summary = tk.Label(self.view, text="等待数据", bg=PANEL, fg=MUTED, anchor="w", padx=12, pady=9)
-        self.summary.pack(fill="x")
-        self.canvas = tk.Canvas(self.view, bg="#111111", highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True, padx=8)
-        self.canvas.bind("<Configure>", lambda event: self.render())
-        self.canvas.bind("<Motion>", self.inspect)
-        self.canvas.create_text(250, 200, text="打开 PARCHG 或载入演示数据", fill=MUTED, font=("Microsoft YaHei UI", 12))
-        self.readout = tk.Label(self.view, text="x  —     y  —     value  —", bg=PANEL, fg=MUTED, anchor="w", padx=12, pady=9)
-        self.readout.pack(fill="x")
-        dock = ttk.Notebook(self, height=66)
-        dock.pack(fill="x", padx=62, pady=(6, 0))
-        log_page = ttk.Frame(dock)
-        dock.add(log_page, text="日志")
-        self.log = tk.Text(log_page, height=3, bg="#1a1a1a", fg=MUTED, font=("Consolas", 9), relief="flat", padx=10, pady=5, state="disabled")
-        self.log.pack(fill="both", expand=True)
-        self.status = tk.Label(self, text="就绪  ·  等密度阈值采用 PARCHG 原始数值", bg=BG, fg=MUTED, anchor="w", padx=12, pady=5)
-        self.status.pack(fill="x")
-        self.status.bind("<Configure>", self.update_log)
-        self._last_status = ""
-        self.after(200, self.poll_status)
+        self.setMouseTracking(True)
+        self.readout = readout
+        self.pixels = self.image = self.result = None
+        self.setMinimumSize(350, 300)
 
-    def update_log(self, event=None):
-        text = self.status.cget("text")
-        if text == self._last_status:
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#111111"))
+        if self.image is None:
+            painter.setPen(QColor("#808080"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 或载入演示数据")
             return
-        self._last_status = text
-        self.log.config(state="normal")
-        self.log.insert("end", text+"\n")
-        self.log.see("end")
-        self.log.config(state="disabled")
+        scale = min((self.width()-70)/self.image.width(),(self.height()-70)/self.image.height())
+        width, height = int(self.image.width()*scale),int(self.image.height()*scale)
+        self.rect_image = ((self.width()-width)//2,(self.height()-height)//2,width,height)
+        x,y,_,_ = self.rect_image
+        painter.drawPixmap(x,y,width,height,QPixmap.fromImage(self.image))
+        painter.setPen(QColor("#9e9e9e"))
+        painter.drawText(x,y+height+22,"x / y (Å)    暗 → 低    亮 → 高    洋红 → 无交点")
 
-    def poll_status(self):
-        self.update_log()
-        self.after(200, self.poll_status)
-
-    def combo(self, parent, label, values):
-        ttk.Label(parent, text=label).pack(anchor="w", pady=(3, 2))
-        widget = ttk.Combobox(parent, values=values, state="readonly")
-        widget.current(0)
-        widget.pack(fill="x")
-        return widget
-
-    def entry(self, parent, label, default):
-        ttk.Label(parent, text=label).pack(anchor="w", pady=(3, 2))
-        variable = tk.StringVar(value=default)
-        ttk.Entry(parent, textvariable=variable).pack(fill="x")
-        return variable
-
-    def background(self, operation, callback):
-        if self.busy:
+    def mouseMoveEvent(self,event):
+        if self.image is None or not hasattr(self,"rect_image"):
             return
-        self.busy = True
-        self.run_button.state(["disabled"])
-        self.status.config(text="WORKING  ·  正在处理…")
+        ox,oy,w,h = self.rect_image
+        px,py = event.position().x(),event.position().y()
+        xy = self.low+np.array([(px-ox)/w,1-(py-oy)/h])*(self.high-self.low)
+        frac = xy @ np.linalg.inv(self.lattice[:2,:2])
+        if np.all((frac>=0)&(frac<1)):
+            i,j=(frac*np.array(self.result.shape)).astype(int)
+            self.readout.setText(f"x  {xy[0]:.3f} Å     y  {xy[1]:.3f} Å     值  {self.result[i,j]:.6g} {self.unit}")
+
+    def set_data(self,result,lattice,unit):
+        self.result,self.lattice,self.unit=result,lattice,unit
+        finite=result[np.isfinite(result)]
+        low,high=float(finite.min()),float(finite.max())
+        normalized=np.nan_to_num((result-low)/(high-low if high>low else 1),nan=0)
+        anchors=np.array([[11,17,34],[21,69,109],[29,153,150],[147,215,148],[255,239,172]])
+        rgb=np.stack([np.interp(normalized,np.linspace(0,1,5),anchors[:,c]) for c in range(3)],axis=-1).astype(np.uint8)
+        rgb[np.isnan(result)]=[110,30,70]
+        corners=np.array([[0,0],lattice[0,:2],lattice[1,:2],lattice[0,:2]+lattice[1,:2]])
+        self.low,self.high=corners.min(axis=0),corners.max(axis=0)
+        shape=np.maximum(1,((self.high-self.low)/max(self.high-self.low)*900).astype(int))
+        xx,yy=np.meshgrid(np.linspace(self.low[0],self.high[0],shape[0]),np.linspace(self.high[1],self.low[1],shape[1]))
+        fractional=np.stack([xx,yy],axis=-1) @ np.linalg.inv(lattice[:2,:2])
+        mask=np.all((fractional>=0)&(fractional<=1),axis=-1)
+        ij=np.clip((fractional*np.array(result.shape)).astype(int),0,np.array(result.shape)-1)
+        self.pixels=np.ascontiguousarray(rgb[ij[:,:,0],ij[:,:,1]])
+        self.pixels[~mask]=[17,17,17]
+        self.image=QImage(self.pixels.data,shape[0],shape[1],shape[0]*3,QImage.Format.Format_RGB888).copy()
+        self.update()
+
+class App(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("STM Simulator")
+        self.resize(1240,860)
+        self.setMinimumSize(950,650)
+        self.setStyleSheet(STYLE)
+        self.volume=self.result=None
+        self.busy=False
+        self.jobs=queue.Queue()
+        self.timer=QTimer(self);self.timer.timeout.connect(self.poll);self.timer.start(50)
+        root=QWidget();self.setCentralWidget(root)
+        layout=QVBoxLayout(root);layout.setContentsMargins(8,6,8,6);layout.setSpacing(8)
+        toolbar=QHBoxLayout();toolbar.setSpacing(8)
+        title=QLabel("STM Simulator");title.setFont(QFont("Microsoft YaHei UI",11,QFont.Weight.Bold));toolbar.addWidget(title);toolbar.addSpacing(20)
+        for text,callback in [("打开文件",self.open_file),("演示数据",self.demo),("导出图像",self.export_image),("导出数据",self.export_data)]:
+            button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
+        toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#83bd8b");toolbar.addWidget(state)
+        layout.addLayout(toolbar)
+        body=QHBoxLayout();body.setSpacing(8);layout.addLayout(body,1)
+        rail=QVBoxLayout();button=QPushButton("STM");button.setObjectName("rail");button.setCheckable(True);button.setChecked(True);rail.addWidget(button);rail.addStretch();body.addLayout(rail)
+        split=QSplitter();body.addWidget(split,1)
+        self.tabs=QTabWidget();self.tabs.setDocumentMode(True);split.addWidget(self.tabs)
+        view=QWidget();view.setStyleSheet("background:#222222;")
+        view_layout=QVBoxLayout(view);view_layout.setContentsMargins(8,8,8,8)
+        self.summary=QLabel("等待数据");self.summary.setObjectName("muted");view_layout.addWidget(self.summary)
+        self.readout=QLabel("x  —     y  —     值  —");self.readout.setObjectName("muted")
+        self.image=ImageView(self.readout);view_layout.addWidget(self.image,1);view_layout.addWidget(self.readout)
+        self.tabs.addTab(view,"STM 图像")
+        help_page=QWidget();help_layout=QVBoxLayout(help_page)
+        help_text=QLabel("Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。")
+        help_text.setWordWrap(True);help_layout.addWidget(help_text);help_layout.addStretch();self.tabs.addTab(help_page,"方法说明")
+        scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setMinimumWidth(290);scroll.setMaximumWidth(360)
+        panel=QFrame();panel.setObjectName("panel");scroll.setWidget(panel);split.addWidget(scroll);split.setSizes([900,300])
+        controls=QVBoxLayout(panel);controls.setContentsMargins(12,12,12,12);controls.setSpacing(12)
+        controls.addWidget(QLabel("模拟设置"))
+        self.run_button=QPushButton("运行模拟");self.run_button.setObjectName("primary");self.run_button.clicked.connect(self.run);controls.addWidget(self.run_button)
+        source=self.card(controls,"数据源");self.file_label=QLabel("尚未载入 PARCHG");self.file_label.setWordWrap(True);self.file_label.setObjectName("muted");source.addRow(self.file_label)
+        form=self.card(controls,"扫描参数")
+        self.mode=self.combo(form,"扫描模式",["恒流","恒高"])
+        self.engine=self.combo(form,"搜索算法",["p4vasp 线性","限定真空 · 线性"])
+        self.side=self.combo(form,"扫描表面",["上表面 / −c","下表面 / +c"])
+        self.threshold=self.entry(form,"等密度阈值","0.001")
+        self.height=self.entry(form,"距外层原子 / Å","4.0")
+        self.sigma=self.entry(form,"平滑 / 网格 σ","0")
+        bounds=self.card(controls,"限定真空范围 · 留空自动")
+        self.zmin=self.entry(bounds,"z 下界 / Å","");self.zmax=self.entry(bounds,"z 上界 / Å","")
+        self.engine.currentIndexChanged.connect(self.sync_controls);self.mode.currentIndexChanged.connect(self.sync_controls)
+        self.sync_controls();controls.addStretch()
+        self.status=QLabel("就绪    ·    PARCHG 原始密度单位");self.status.setObjectName("muted");layout.addWidget(self.status)
+
+    def card(self,parent,title):
+        frame=QFrame();frame.setObjectName("card");box=QVBoxLayout(frame);box.setContentsMargins(10,10,10,10)
+        label=QLabel(title);label.setObjectName("muted");box.addWidget(label)
+        form=QFormLayout();form.setSpacing(8);form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows);box.addLayout(form);parent.addWidget(frame);return form
+
+    def entry(self,form,label,value):
+        entry=QLineEdit(value);form.addRow(label,entry);return entry
+
+    def combo(self,form,label,values):
+        combo=QComboBox();combo.addItems(values);form.addRow(label,combo);return combo
+
+    def sync_controls(self):
+        current=self.mode.currentIndex()==0
+        self.threshold.setEnabled(current);self.height.setEnabled(not current);self.engine.setEnabled(current)
+        for entry in (self.zmin,self.zmax): entry.setEnabled(current and self.engine.currentIndex()==1)
+
+    def background(self,operation,callback):
+        if self.busy:return
+        self.busy=True;self.run_button.setEnabled(False);self.status.setText("正在处理…")
         def worker():
-            try:
-                value = operation()
-                self.after(0, lambda: finish(value, None))
-            except Exception as error:
-                self.after(0, lambda message=str(error): finish(None, message))
-        def finish(value, error):
-            self.busy = False
-            self.run_button.state(["!disabled"])
-            if error:
-                self.status.config(text="ERROR  ·  "+error)
-                messagebox.showerror("STM Simulator", error)
-            else:
-                callback(value)
-        threading.Thread(target=worker, daemon=True).start()
+            try:self.jobs.put((callback,operation(),None))
+            except Exception as error:self.jobs.put((callback,None,str(error)))
+        threading.Thread(target=worker,daemon=True).start()
+
+    def poll(self):
+        try:callback,value,error=self.jobs.get_nowait()
+        except queue.Empty:return
+        self.busy=False;self.run_button.setEnabled(True)
+        if error:
+            self.status.setText(error);QMessageBox.warning(self,"STM Simulator",error)
+        else:callback(value)
 
     def open_file(self):
-        if self.busy:
-            return
-        path = filedialog.askopenfilename(title="选择 PARCHG", filetypes=[("VASP volume", "PARCHG* CHGCAR*"), ("All files", "*")])
-        if path:
-            self.background(lambda: read_parchg(path), self.loaded)
+        if self.busy:return
+        path,_=QFileDialog.getOpenFileName(self,"选择 PARCHG","","VASP volume (PARCHG* CHGCAR*);;All files (*)")
+        if path:self.background(lambda:read_parchg(path),self.loaded)
 
-    def loaded(self, volume):
-        self.volume = volume
-        self.result = self.rgb = self.photo = None
-        self.canvas.delete("all")
-        self.file_label.config(text=f"{volume.name}\nGrid  {volume.values.shape}\nAtoms  {len(volume.positions)}")
-        self.status.config(text="LOADED  ·  第一数据块 / total density")
+    def loaded(self,volume):
+        self.volume=volume;self.result=None;self.image.image=None;self.image.update()
+        self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
+        self.summary.setText("等待模拟");self.status.setText("已载入第一数据块 · 总部分密度")
 
     def demo(self):
-        if not self.busy:
-            self.loaded(demo_volume())
-            self.run()
+        if not self.busy:self.loaded(demo_volume());self.run()
 
     def run(self):
-        if self.volume is None:
-            messagebox.showinfo("STM Simulator", "请先打开 PARCHG 或演示数据")
-            return
-        if self.busy:
-            return
+        if self.volume is None or self.busy:return
         try:
-            mode = "current" if self.mode.current() == 0 else "height"
-            kwargs = dict(mode=mode, side="top" if self.side.current() == 0 else "bottom",
-                          height=float(self.height.get()), threshold=float(self.threshold.get()), sigma=float(self.sigma.get()),
-                          z_min=float(self.zmin.get()) if self.zmin.get().strip() else None,
-                          z_max=float(self.zmax.get()) if self.zmax.get().strip() else None)
+            bounded=self.engine.currentIndex()==1
+            parameters=dict(mode="current" if self.mode.currentIndex()==0 else "height",engine="bounded" if bounded else "p4vasp",side="top" if self.side.currentIndex()==0 else "bottom",threshold=float(self.threshold.text()),height=float(self.height.text()),sigma=float(self.sigma.text()),z_min=float(self.zmin.text()) if bounded and self.zmin.text().strip() else None,z_max=float(self.zmax.text()) if bounded and self.zmax.text().strip() else None)
         except ValueError:
-            messagebox.showerror("Parameters", "请输入有效数值")
-            return
-        volume = self.volume
-        self.background(lambda: simulate(volume, **kwargs), lambda value: self.calculated(value, kwargs))
+            QMessageBox.warning(self,"参数","请输入有效数值");return
+        volume=self.volume
+        self.background(lambda:simulate(volume,**parameters),lambda output:self.calculated(output,parameters))
 
-    def calculated(self, output, parameters):
-        self.result, self.plane_height = output
-        self.parameters = parameters
-        finite = self.result[np.isfinite(self.result)]
+    def calculated(self,output,parameters):
+        self.result,self.plane_height=output;self.parameters=parameters
+        finite=self.result[np.isfinite(self.result)]
         if not finite.size:
-            self.result = self.photo = None
-            self.rgb = None
-            self.canvas.delete("all")
-            self.status.config(text="NO CROSSINGS  ·  请调整阈值或搜索范围")
-            return
-        self.unit = "Å" if parameters["mode"] == "current" else "raw density"
-        self.minimum, self.maximum = float(finite.min()), float(finite.max())
-        self.summary.config(text=f"{parameters['mode'].upper()}   |   {parameters['side'].upper()}   |   {self.minimum:.5g} — {self.maximum:.5g} {self.unit}")
-        missing = 100*np.isnan(self.result).mean()
-        self.status.config(text=f"COMPLETE  ·  Δ = {self.maximum-self.minimum:.5g} {self.unit}  ·  无交点 {missing:.1f}%")
-        self.make_rgb()
-        self.render()
-
-    def make_rgb(self):
-        span = self.maximum-self.minimum
-        normalized = np.nan_to_num((self.result-self.minimum)/(span if span else 1), nan=0.)
-        anchors = np.array([[11, 17, 34], [21, 69, 109], [29, 153, 150], [147, 215, 148], [255, 239, 172]])
-        levels = np.linspace(0, 1, len(anchors))
-        self.rgb = np.stack([np.interp(normalized, levels, anchors[:, channel]) for channel in range(3)], axis=-1).astype(np.uint8)
-        self.rgb[np.isnan(self.result)] = [110, 30, 70]
-
-    def render(self):
-        if self.rgb is None:
-            return
-        lattice = self.volume.lattice
-        corners = np.array([[0, 0], lattice[0,:2], lattice[1,:2], lattice[0,:2]+lattice[1,:2]])
-        low, high = corners.min(axis=0), corners.max(axis=0)
-        available = np.array([max(100,self.canvas.winfo_width()-60), max(100,self.canvas.winfo_height()-60)])
-        scale = min(available/(high-low))
-        width, height = np.maximum(1, ((high-low)*scale).astype(int))
-        xx, yy = np.meshgrid(np.linspace(low[0],high[0],width), np.linspace(high[1],low[1],height))
-        fractional = np.stack([xx,yy],axis=-1) @ np.linalg.inv(lattice[:2,:2])
-        mask = np.all((fractional>=0)&(fractional<=1),axis=-1)
-        ij = np.clip((fractional*np.array(self.result.shape)).astype(int),0,np.array(self.result.shape)-1)
-        pixels = self.rgb[ij[:,:,0],ij[:,:,1]].copy()
-        pixels[~mask] = [17,17,17]
-        ppm = f"P6\n{width} {height}\n255\n".encode()+pixels.tobytes()
-        self.photo = tk.PhotoImage(data=ppm, format="PPM")
-        ox, oy = (self.canvas.winfo_width()-width)//2, (self.canvas.winfo_height()-height)//2
-        self.image_geometry = (ox,oy,width,height,low,high)
-        self.canvas.delete("all")
-        self.canvas.create_image(ox,oy,image=self.photo,anchor="nw")
-        self.canvas.create_text(ox,oy+height+14,text="x / y (Å)   ·   dark → low    light → high    magenta → no crossing",fill=MUTED,anchor="w")
-
-    def inspect(self,event):
-        if self.rgb is None or not hasattr(self,"image_geometry"):
-            return
-        ox,oy,w,h,low,high = self.image_geometry
-        point = np.array([low[0]+(event.x-ox)/w*(high[0]-low[0]), high[1]-(event.y-oy)/h*(high[1]-low[1])])
-        frac = point @ np.linalg.inv(self.volume.lattice[:2,:2])
-        if np.all((frac>=0)&(frac<1)):
-            i,j = (frac*np.array(self.result.shape)).astype(int)
-            self.readout.config(text=f"x {point[0]:.3f} Å    y {point[1]:.3f} Å    value {self.result[i,j]:.6g} {self.unit}")
+            self.result=None;self.image.image=None;self.image.update();self.status.setText("没有交点，请调整阈值或范围");return
+        self.unit="Å" if parameters["mode"]=="current" else "raw density"
+        self.summary.setText(f"{self.mode.currentText()}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
+        self.status.setText(f"完成    ·    起伏 {np.ptp(finite):.5g} {self.unit}    ·    无交点 {100*np.isnan(self.result).mean():.1f}%")
+        self.image.set_data(self.result,self.volume.lattice,self.unit)
 
     def export_data(self):
-        if self.result is None:
-            return
-        path = filedialog.asksaveasfilename(defaultextension=".npz",filetypes=[("NumPy archive", "*.npz")])
-        if path:
-            np.savez_compressed(path, values=self.result, lattice=self.volume.lattice,
-                                parameters=str(self.parameters), unit=self.unit)
-            i,j = np.indices(self.result.shape)
-            xy = (np.stack([i/self.result.shape[0],j/self.result.shape[1]],axis=-1) @ self.volume.lattice[:2,:2])
-            np.savetxt(str(Path(path).with_suffix(".csv")), np.column_stack([xy.reshape(-1,2),self.result.ravel()]), delimiter=",",header=f"x_A,y_A,value_{self.unit}",comments="")
-            self.status.config(text="EXPORTED  ·  NPZ + CSV")
+        if self.result is None:return
+        path,_=QFileDialog.getSaveFileName(self,"导出数据","stm.npz","NumPy archive (*.npz)")
+        if not path:return
+        np.savez_compressed(path,values=self.result,lattice=self.volume.lattice,parameters=str(self.parameters),unit=self.unit)
+        i,j=np.indices(self.result.shape)
+        xy=np.stack([i/self.result.shape[0],j/self.result.shape[1]],axis=-1) @ self.volume.lattice[:2,:2]
+        np.savetxt(Path(path).with_suffix(".csv"),np.column_stack([xy.reshape(-1,2),self.result.ravel()]),delimiter=",",header=f"x_A,y_A,value_{self.unit}",comments="")
+        self.status.setText("已导出 NPZ 和 CSV")
 
     def export_image(self):
-        if self.photo is None:
-            return
-        path = filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG", "*.png")])
-        if path:
-            self.photo.write(path,format="png")
-            self.status.config(text="EXPORTED  ·  PNG")
+        if self.image.image is None:return
+        path,_=QFileDialog.getSaveFileName(self,"导出图像","stm.png","PNG (*.png)")
+        if path:self.image.image.save(path);self.status.setText("已导出 PNG")
 
-if __name__ == "__main__":
-    App().mainloop()
+def main():
+    import sys
+    app=QApplication(sys.argv);app.setStyle("Fusion")
+    window=App();window.show();return app.exec()
