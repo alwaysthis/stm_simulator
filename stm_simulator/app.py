@@ -4,13 +4,14 @@ import threading
 from pathlib import Path
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, QSettings, QSignalBlocker
-from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont
+from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar, QSlider)
 from .core import read_parchg, simulate
 from .widgets import ChevronComboBox, NumericBox
 from .view3d import SurfaceView
+from .colors import ColorScale, PALETTES
 
 STYLE = """
 QMainWindow, QWidget {background:#242424;color:#ffffff;font-family:'Microsoft YaHei UI';font-size:13px;}
@@ -64,33 +65,49 @@ class ImageView(QWidget):
             painter.setPen(QColor("#808080"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 文件开始模拟")
             return
-        scale = min((self.width()-70)/self.image.width(),(self.height()-70)/self.image.height())
-        width, height = int(self.image.width()*scale),int(self.image.height()*scale)
-        self.rect_image = ((self.width()-width)//2,(self.height()-height)//2,width,height)
-        x,y,_,_ = self.rect_image
-        painter.drawPixmap(x,y,width,height,QPixmap.fromImage(self.image))
+        scale = min(max(1, self.width()-140)/self.image.width(),
+                    max(1, self.height()-100)/self.image.height())
+        width, height = max(1, int(self.image.width()*scale)), max(1, int(self.image.height()*scale))
+        x, y = max(10, (self.width()-140-width)//2), max(35, (self.height()-height-20)//2)
+        self.rect_image = (x, y, width, height)
+        painter.drawPixmap(x, y, width, height, QPixmap.fromImage(self.image))
         painter.setPen(QColor("#9e9e9e"))
-        painter.drawText(x,y+height+22,"x / y (Å)    暗 → 低    亮 → 高    洋红 → 无交点")
+        painter.drawText(x, y+height+22, "x / y (Å)    洋红 → 无交点")
+        bar_x, bar_width = x+width+18, 16
+        gradient = QLinearGradient(bar_x, y+height, bar_x, y)
+        levels = np.linspace(self.color_scale.low, self.color_scale.high, 65)
+        for stop, rgba in zip(np.linspace(0, 1, 65), self.color_scale.rgba(levels)):
+            gradient.setColorAt(float(stop), QColor.fromRgbF(*rgba))
+        painter.fillRect(bar_x, y, bar_width, height, gradient)
+        painter.setPen(QPen(QColor("#aaaaaa"), 1))
+        painter.drawRect(bar_x, y, bar_width, height)
+        ticks = [.5] if self.color_scale.low == self.color_scale.high else np.linspace(0, 1, 5)
+        for fraction in ticks:
+            tick_y = int(y+height*(1-fraction))
+            raw = self.color_scale.low+(self.color_scale.high-self.color_scale.low)*fraction
+            value = self.color_scale.display_value(raw)
+            painter.drawLine(bar_x+bar_width, tick_y, bar_x+bar_width+4, tick_y)
+            painter.drawText(bar_x+bar_width+7, tick_y+4, f"{value:.4g}")
+        painter.drawText(bar_x-2, max(16, y-10), self.color_scale.label)
 
     def mouseMoveEvent(self,event):
         if self.image is None or not hasattr(self,"rect_image"):
             return
         ox,oy,w,h = self.rect_image
         px,py = event.position().x(),event.position().y()
+        if not (ox <= px < ox+w and oy <= py < oy+h):
+            return
         xy = self.low+np.array([(px-ox)/w,1-(py-oy)/h])*(self.high-self.low)
         frac = xy @ np.linalg.inv(self.lattice[:2,:2])
         if np.all((frac>=0)&(frac<1)):
             i,j=(frac*np.array(self.result.shape)).astype(int)
             self.readout.setText(f"x  {xy[0]:.3f} Å     y  {xy[1]:.3f} Å     值  {self.result[i,j]:.6g} {self.unit}")
 
-    def set_data(self,result,lattice,unit):
+    def set_data(self,result,lattice,unit,color_scale):
         self.result,self.lattice,self.unit=result,lattice,unit
-        finite=result[np.isfinite(result)]
-        low,high=float(finite.min()),float(finite.max())
-        normalized=np.nan_to_num((result-low)/(high-low if high>low else 1),nan=0)
-        anchors=np.array([[11,17,34],[21,69,109],[29,153,150],[147,215,148],[255,239,172]])
-        rgb=np.stack([np.interp(normalized,np.linspace(0,1,5),anchors[:,c]) for c in range(3)],axis=-1).astype(np.uint8)
-        rgb[np.isnan(result)]=[110,30,70]
+        self.color_scale = color_scale
+        rgb = np.round(color_scale.rgba(result)[..., :3]*255).astype(np.uint8)
+        rgb[~np.isfinite(result)] = [110, 30, 70]
         corners=np.array([[0,0],lattice[0,:2],lattice[1,:2],lattice[0,:2]+lattice[1,:2]])
         self.low,self.high=corners.min(axis=0),corners.max(axis=0)
         shape=np.maximum(1,((self.high-self.low)/max(self.high-self.low)*900).astype(int))
@@ -202,7 +219,17 @@ class App(QMainWindow):
         self.zmin=self.entry(bounds,"z 下界 / Å","");self.zmax=self.entry(bounds,"z 上界 / Å","")
         self.engine.currentIndexChanged.connect(self.sync_controls);self.mode.currentIndexChanged.connect(self.sync_controls)
         self.side.currentIndexChanged.connect(self.update_slider_ranges)
-        self.sync_controls();controls.addStretch()
+        colors = self.card(controls, "颜色标尺")
+        self.palette = self.combo(colors, "配色", list(PALETTES))
+        self.color_units = self.combo(colors, "高度标注", ["z / Å", "相对最低高度 / nm"])
+        self.color_range = self.combo(colors, "范围", ["全范围", "固定范围"])
+        self.color_min = self.entry(colors, "色标下限", "")
+        self.color_max = self.entry(colors, "色标上限", "")
+        for combo in (self.palette, self.color_units, self.color_range):
+            combo.currentIndexChanged.connect(self.refresh_colors)
+        for field in (self.color_min, self.color_max):
+            field.editingFinished.connect(self.refresh_colors)
+        self.sync_controls();self.refresh_colors();controls.addStretch()
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         layout.addWidget(self.progress)
@@ -210,7 +237,7 @@ class App(QMainWindow):
         QTimer.singleShot(0, self.restore_file)
 
     def show_help(self):
-        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。\n\n拖动滑条或修改目标信号、高度后自动更新双图，也可点击运行模拟。\n恒流调整目标信号，恒高调整距外层原子的距离。\n三维图拖动旋转、滚轮缩放，勾选显示原子。")
+        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。\n\n拖动滑条或修改目标信号、高度后自动更新双图，也可点击运行模拟。\n恒流调整目标信号，恒高调整距外层原子的距离。\n三维图拖动旋转、滚轮缩放，勾选显示原子。\n曲面和原子共用笛卡尔 Å 坐标，保持xyz等比例。\n颜色标尺支持全范围或固定范围，可选择相对最低高度nm。\n恒流目标信号滑条采用对数刻度，便于跨数量级调节。")
 
     def card(self,parent,title):
         frame=QFrame();frame.setObjectName("card");box=QVBoxLayout(frame);box.setContentsMargins(10,10,10,10)
@@ -351,8 +378,37 @@ class App(QMainWindow):
         self.unit="Å" if parameters["mode"]=="current" else "raw density"
         self.summary.setText(f"{'恒流' if parameters['mode'] == 'current' else '恒高'}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
         self.status.setText(f"完成    ·    起伏 {np.ptp(finite):.5g} {self.unit}    ·    无交点 {100*np.isnan(self.result).mean():.1f}%")
-        self.image.set_data(self.result,self.volume.lattice,self.unit)
-        self.surface.set_data(self.result, self.volume, self.plane_height)
+        self.refresh_colors()
+
+    def refresh_colors(self):
+        fixed = self.color_range.currentIndex() == 1
+        self.color_min.setEnabled(fixed)
+        self.color_max.setEnabled(fixed)
+        if self.result is None:
+            return
+        current = self.parameters["mode"] == "current"
+        self.color_units.setEnabled(current)
+        finite = self.result[np.isfinite(self.result)]
+        low, high = float(finite.min()), float(finite.max())
+        relative = current and self.color_units.currentIndex() == 1
+        factor, offset = (.1, low) if relative else (1., 0.)
+        label = "Δz / nm" if relative else ("z / Å" if current else "density (raw)")
+        if fixed:
+            try:
+                bottom = float(self.color_min.text()) if self.color_min.text().strip() else (low-offset)*factor
+                top = float(self.color_max.text()) if self.color_max.text().strip() else (high-offset)*factor
+                if not np.isfinite([bottom, top]).all() or bottom >= top:
+                    raise ValueError()
+                low, high = bottom/factor+offset, top/factor+offset
+            except ValueError:
+                self.status.setText("色标范围无效，已使用全范围，请输入下限小于上限的有效数值")
+                with QSignalBlocker(self.color_range):
+                    self.color_range.setCurrentIndex(0)
+                self.color_min.setEnabled(False)
+                self.color_max.setEnabled(False)
+        self.color_scale = ColorScale(low, high, self.palette.currentText(), factor, offset, label)
+        self.image.set_data(self.result, self.volume.lattice, self.unit, self.color_scale)
+        self.surface.set_data(self.result, self.volume, self.plane_height, self.color_scale)
 
     def export_data(self):
         if self.result is None:return
@@ -367,7 +423,7 @@ class App(QMainWindow):
     def export_image(self):
         if self.image.image is None:return
         path,_=QFileDialog.getSaveFileName(self,"导出图像","stm.png","PNG (*.png)")
-        if path:self.image.image.save(path);self.status.setText("已导出 PNG")
+        if path:self.image.grab().save(path);self.status.setText("已导出 PNG")
 
 def main():
     import sys
