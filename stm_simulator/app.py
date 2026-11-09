@@ -7,9 +7,9 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
-    QTabWidget, QSplitter, QFileDialog, QMessageBox, QScrollArea)
+    QSplitter, QFileDialog, QMessageBox, QScrollArea)
 from .core import read_parchg, simulate, demo_volume
-from .widgets import ChevronComboBox, NumericBox, WorkspaceTabBar
+from .widgets import ChevronComboBox, NumericBox
 
 STYLE = """
 QMainWindow, QWidget {background:#242424;color:#ffffff;font-family:'Microsoft YaHei UI';font-size:13px;}
@@ -36,11 +36,6 @@ QDoubleSpinBox::up-button {width:18px;border:none;border-top-right-radius:4px;}
 QDoubleSpinBox::down-button {width:18px;border:none;border-bottom-right-radius:4px;}
 QDoubleSpinBox::up-button:hover,QDoubleSpinBox::down-button:hover {background:#3c3c3c;}
 QComboBox::drop-down {border:none;width:22px;}
-QTabWidget {background:#303030;border:none;}
-QTabWidget::pane {border:none;border-radius:8px;background:#222222;top:0px;}
-QTabWidget::tab-bar {left:0px;}
-QTabBar {background:#303030;}
-QTabBar::tab {background:transparent;border:none;padding:0;margin:0;}
 QScrollArea {border:none;background:transparent;}
 QScrollBar:vertical {background:transparent;width:6px;}
 QScrollBar::handle:vertical {background:#4a4a4a;border-radius:3px;min-height:25px;}
@@ -117,23 +112,19 @@ class App(QMainWindow):
         layout=QVBoxLayout(root);layout.setContentsMargins(8,6,8,6);layout.setSpacing(8)
         toolbar=QHBoxLayout();toolbar.setSpacing(8)
         title=QLabel("STM Simulator");title.setFont(QFont("Microsoft YaHei UI",11,QFont.Weight.Bold));toolbar.addWidget(title);toolbar.addSpacing(20)
-        for text,callback in [("打开文件",self.open_file),("演示数据",self.demo),("导出图像",self.export_image),("导出数据",self.export_data)]:
+        for text,callback in [("打开文件",self.open_file),("演示数据",self.demo),("导出图像",self.export_image),("导出数据",self.export_data),("帮助",self.show_help)]:
             button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
         toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#83bd8b");toolbar.addWidget(state)
         layout.addLayout(toolbar)
         body=QHBoxLayout();body.setSpacing(8);layout.addLayout(body,1)
         rail=QVBoxLayout();button=QPushButton("STM");button.setObjectName("rail");button.setCheckable(True);button.setChecked(True);rail.addWidget(button);rail.addStretch();body.addLayout(rail)
         split=QSplitter();body.addWidget(split,1)
-        self.tabs=QTabWidget();self.tabs.setTabBar(WorkspaceTabBar());self.tabs.setDocumentMode(True);split.addWidget(self.tabs)
         view=QWidget();view.setStyleSheet("background:#222222;")
         view_layout=QVBoxLayout(view);view_layout.setContentsMargins(24,10,24,10)
         self.summary=QLabel("等待数据");self.summary.setObjectName("muted");view_layout.addWidget(self.summary)
         self.readout=QLabel("x  —     y  —     值  —");self.readout.setObjectName("muted")
         self.image=ImageView(self.readout);view_layout.addWidget(self.image,1);view_layout.addWidget(self.readout)
-        self.tabs.addTab(view,"STM 图像")
-        help_page=QWidget();help_page.setStyleSheet("background:#222222;");help_layout=QVBoxLayout(help_page);help_layout.setContentsMargins(24,10,24,10)
-        help_text=QLabel("Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。")
-        help_text.setWordWrap(True);help_layout.addWidget(help_text);help_layout.addStretch();self.tabs.addTab(help_page,"方法说明")
+        split.addWidget(view)
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setMinimumWidth(290);scroll.setMaximumWidth(360)
         panel=QFrame();panel.setObjectName("panel");scroll.setWidget(panel);split.addWidget(scroll);split.setSizes([900,300])
         controls=QVBoxLayout(panel);controls.setContentsMargins(12,12,12,12);controls.setSpacing(12)
@@ -152,6 +143,9 @@ class App(QMainWindow):
         self.engine.currentIndexChanged.connect(self.sync_controls);self.mode.currentIndexChanged.connect(self.sync_controls)
         self.sync_controls();controls.addStretch()
         self.status=QLabel("就绪    ·    PARCHG 原始密度单位");self.status.setObjectName("muted");layout.addWidget(self.status)
+
+    def show_help(self):
+        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。")
 
     def card(self,parent,title):
         frame=QFrame();frame.setObjectName("card");box=QVBoxLayout(frame);box.setContentsMargins(10,10,10,10)

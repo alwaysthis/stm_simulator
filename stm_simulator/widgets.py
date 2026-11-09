@@ -1,7 +1,7 @@
 """Studio-inspired controls. Geometry follows the reference studio branch."""
-from PyQt6.QtCore import Qt, QSize, QRectF, QLocale
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QFontMetrics, QCursor
-from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QTabBar
+from PyQt6.QtCore import QLocale
+from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox
 
 class ChevronComboBox(QComboBox):
     def wheelEvent(self, event):
@@ -31,62 +31,3 @@ class NumericBox(QDoubleSpinBox):
 
     def wheelEvent(self, event):
         event.ignore()
-
-class WorkspaceTabBar(QTabBar):
-    """Compact round-top tabs, full-width strip, fixed label position."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setExpanding(False)
-        self.setDrawBase(False)
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-    def tabSizeHint(self, index):
-        font = QFont(self.font())
-        font.setPixelSize(12)
-        metrics = QFontMetrics(font)
-        return QSize(max(64, metrics.horizontalAdvance(self.tabText(index))+16)+4,
-                     max(26, metrics.height()+12))
-
-    def mouseMoveEvent(self, event):
-        super().mouseMoveEvent(event)
-        self.update()
-
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#303030"))
-        # The first tab sits flush with the workspace edge. Its outer corner
-        # belongs to the window floor, not to the rectangular tab-strip fill.
-        # Use the same curve as the selected tab so no strip-colored ear shows.
-        radius = min(10., self.height()/2)
-        corner = QPainterPath()
-        corner.moveTo(0, 0)
-        corner.lineTo(radius, 0)
-        corner.quadTo(0, 0, 0, radius)
-        corner.closeSubpath()
-        painter.fillPath(corner, QColor("#242424"))
-        font = QFont(self.font()); font.setPixelSize(12); painter.setFont(font)
-        cursor = self.mapFromGlobal(QCursor.pos())
-        for index in range(self.count()):
-            rect = QRectF(self.tabRect(index)).adjusted(0, 0, -4, 0)
-            if index == self.currentIndex():
-                radius = min(10.,rect.height()/2)
-                path = QPainterPath()
-                path.moveTo(rect.left(),rect.bottom())
-                path.lineTo(rect.left(),rect.top()+radius)
-                path.quadTo(rect.left(),rect.top(),rect.left()+radius,rect.top())
-                path.lineTo(rect.right()-radius,rect.top())
-                path.quadTo(rect.right(),rect.top(),rect.right(),rect.top()+radius)
-                path.lineTo(rect.right(),rect.bottom());path.closeSubpath()
-                painter.fillPath(path,QColor("#222222"))
-            elif rect.contains(float(cursor.x()),float(cursor.y())):
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor("#3c3c3c"))
-                painter.drawRoundedRect(rect.adjusted(2,2,-2,-2),6,6)
-            painter.setPen(QColor("#9e9e9e"))
-            painter.drawText(rect,Qt.AlignmentFlag.AlignCenter,self.tabText(index))
