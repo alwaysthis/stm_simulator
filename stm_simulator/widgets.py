@@ -60,6 +60,16 @@ class WorkspaceTabBar(QTabBar):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QColor("#303030"))
+        # The first tab sits flush with the workspace edge. Its outer corner
+        # belongs to the window floor, not to the rectangular tab-strip fill.
+        # Use the same curve as the selected tab so no strip-colored ear shows.
+        radius = min(10., self.height()/2)
+        corner = QPainterPath()
+        corner.moveTo(0, 0)
+        corner.lineTo(radius, 0)
+        corner.quadTo(0, 0, 0, radius)
+        corner.closeSubpath()
+        painter.fillPath(corner, QColor("#242424"))
         font = QFont(self.font()); font.setPixelSize(12); painter.setFont(font)
         cursor = self.mapFromGlobal(QCursor.pos())
         for index in range(self.count()):
