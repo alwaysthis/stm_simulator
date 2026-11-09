@@ -1,0 +1,134 @@
+"""Tersoff-Hamann maps from VASP volumetric partial charge files."""
+from dataclasses import dataclass
+from pathlib import Path
+import numpy as np
+from scipy.ndimage import gaussian_filter
+
+@dataclass
+class Volume:
+    lattice: np.ndarray
+    positions: np.ndarray
+    values: np.ndarray
+    name: str
+
+    @property
+    def cell_volume(self):
+        return abs(np.linalg.det(self.lattice))
+
+
+def read_parchg(path):
+    """Read the first (total-density) block. Preserve VASP's raw normalization."""
+    with open(path, encoding="utf-8", errors="replace") as stream:
+        name = stream.readline().strip()
+        scales = np.fromstring(stream.readline(), sep=" ")
+        lattice = np.array([np.fromstring(stream.readline(), sep=" ") for _ in range(3)])
+        if lattice.shape != (3, 3) or len(scales) not in (1, 3):
+            raise ValueError("Invalid lattice header")
+        if len(scales) == 1:
+            factor = scales[0]
+            if factor < 0:
+                factor = (abs(factor) / abs(np.linalg.det(lattice))) ** (1/3)
+            lattice *= factor
+            cart_scale = factor
+        else:
+            if np.any(scales <= 0):
+                raise ValueError("Three scale factors must be positive")
+            lattice *= scales
+            cart_scale = scales
+        line = stream.readline().split()
+        if not all(token.isdigit() for token in line):
+            line = stream.readline().split()
+        counts = [int(token) for token in line]
+        mode = stream.readline().strip()
+        if mode.lower().startswith("s"):
+            mode = stream.readline().strip()
+        positions = np.array([[float(v) for v in stream.readline().split()[:3]]
+                              for _ in range(sum(counts))])
+        if mode.lower().startswith(("c", "k")):
+            positions = (positions * cart_scale) @ np.linalg.inv(lattice)
+        elif not mode.lower().startswith("d"):
+            raise ValueError("Unknown coordinate mode")
+        line = stream.readline()
+        while line and not line.strip():
+            line = stream.readline()
+        shape = tuple(int(v) for v in line.split())
+        if len(shape) != 3 or min(shape) <= 0:
+            raise ValueError("Invalid FFT grid dimensions")
+        size = int(np.prod(shape))
+        values = np.empty(size)
+        offset = 0
+        while offset < size:
+            line = stream.readline()
+            if not line:
+                raise ValueError("Incomplete density block")
+            chunk = np.fromstring(line.replace("D", "E").replace("d", "e"), sep=" ")
+            if offset + len(chunk) > size:
+                raise ValueError("Too many values in density block")
+            values[offset:offset + len(chunk)] = chunk
+            offset += len(chunk)
+    if not np.isfinite(values).all():
+        raise ValueError("Density contains non-finite values")
+    return Volume(lattice, positions, values.reshape(shape, order="F"), name)
+
+
+def simulate(volume, mode="current", height=4., threshold=0.001,
+             side="top", sigma=0., z_min=None, z_max=None):
+    """Threshold is in raw PARCHG units; heights use Cartesian angstroms.
+
+    Constant-current chooses the first vacuum-to-surface upward crossing in
+    the selected z interval. Missing crossings remain NaN, never zero.
+    """
+    lattice = volume.lattice
+    if not (np.allclose(lattice[:2, 2], 0, atol=1e-7)
+            and np.allclose(lattice[2, :2], 0, atol=1e-7) and lattice[2, 2] > 0):
+        raise ValueError("Requires a,b in xy and a positive c vector along z")
+    if side not in ("top", "bottom") or mode not in ("height", "current"):
+        raise ValueError("Unknown simulation mode or surface")
+    if sigma < 0:
+        raise ValueError("Smoothing sigma must be nonnegative")
+    data = volume.values
+    if sigma:
+        data = gaussian_filter(data, sigma=sigma, mode="wrap")
+    length = lattice[2, 2]
+    z = np.arange(data.shape[2]) * length / data.shape[2]
+    atom_z = volume.positions[:, 2] * length
+    if mode == "height":
+        if height < 0:
+            raise ValueError("Tip distance must be nonnegative")
+        target = atom_z.max()+height if side == "top" else atom_z.min()-height
+        if not z[0] <= target <= z[-1]:
+            raise ValueError("Tip plane is outside the stored cell")
+        index = min(int(target / length * len(z)), len(z)-2)
+        fraction = (target-z[index]) / (z[index+1]-z[index])
+        return data[:, :, index]*(1-fraction)+data[:, :, index+1]*fraction, target
+    if threshold <= 0:
+        raise ValueError("Density threshold must be positive")
+    # Defaults only search the vacuum adjacent to the selected surface.
+    low = atom_z.max() if side == "top" else z[0]
+    high = z[-1] if side == "top" else atom_z.min()
+    low = low if z_min is None else z_min
+    high = high if z_max is None else z_max
+    if not (0 <= low < high <= z[-1]):
+        raise ValueError("Invalid search interval within the stored cell")
+    indices = np.where((z >= low) & (z <= high))[0]
+    if side == "top":
+        indices = indices[::-1]
+    if len(indices) < 2:
+        raise ValueError("Search interval needs at least two grid planes")
+    result = np.full(data.shape[:2], np.nan)
+    for outer, inner in zip(indices[:-1], indices[1:]):
+        first, second = data[:, :, outer], data[:, :, inner]
+        crossing = np.isnan(result) & (first < threshold) & (second >= threshold)
+        fraction = np.zeros_like(first)
+        np.divide(threshold-first, second-first, out=fraction, where=crossing)
+        result[crossing] = (z[outer]+fraction*(z[inner]-z[outer]))[crossing]
+    return result, None
+
+
+def demo_volume():
+    lattice = np.diag([24., 24., 30.])
+    x, y, z = np.meshgrid(np.arange(96)/96*24, np.arange(96)/96*24,
+                           np.arange(180)/180*30, indexing="ij")
+    surface = 12 + .7*np.cos(2*np.pi*x/8)*np.cos(2*np.pi*y/8)
+    values = np.exp(-1.7*np.abs(z-surface))
+    return Volume(lattice, np.array([[.5, .5, .4]]), values, "Analytic demo")
