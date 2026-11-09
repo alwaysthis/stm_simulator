@@ -23,5 +23,5 @@ If py = "" Then
 End If
 sh.CurrentDirectory = root
 command = Chr(34) & py & Chr(34) & " " & Chr(34) & root & "\run.py" & Chr(34)
-code = sh.Run(command, 0, True)
+code = sh.Run(command, 1, True)
 If code <> 0 Then MsgBox "Startup failed. See startup-error.log in the application folder.", 16, "STM Simulator"
