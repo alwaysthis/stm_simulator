@@ -23,8 +23,6 @@ QPushButton:pressed {background:#333333;}
 QPushButton:disabled {color:#777777;}
 QPushButton#primary {background:#3d6a9a;border-color:#4a90d9;}
 QPushButton#primary:hover {background:#4a90d9;}
-QPushButton#rail {background:transparent;border:none;border-radius:6px;padding:12px 6px;color:#9e9e9e;}
-QPushButton#rail:checked {background:#3d6a9a;color:white;}
 QLineEdit,QComboBox,QDoubleSpinBox {background:#1e1e1e;border:1px solid #3a3a3a;border-radius:4px;padding:3px 8px;min-height:20px;selection-background-color:#4a90d9;}
 QLineEdit:focus,QComboBox:focus,QDoubleSpinBox:focus {border-color:#4a90d9;}
 QLineEdit:hover,QComboBox:hover,QDoubleSpinBox:hover {border-color:#4a90d9;background:#242424;}
@@ -101,7 +99,7 @@ class App(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("STM Simulator")
-        self.resize(1240,860)
+        self.resize(1240,720)
         self.setMinimumSize(950,650)
         self.setStyleSheet(STYLE)
         self.volume=self.result=None
@@ -117,7 +115,6 @@ class App(QMainWindow):
         toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#83bd8b");toolbar.addWidget(state)
         layout.addLayout(toolbar)
         body=QHBoxLayout();body.setSpacing(8);layout.addLayout(body,1)
-        rail=QVBoxLayout();button=QPushButton("STM");button.setObjectName("rail");button.setCheckable(True);button.setChecked(True);rail.addWidget(button);rail.addStretch();body.addLayout(rail)
         split=QSplitter();body.addWidget(split,1)
         view=QWidget();view.setStyleSheet("background:#222222;")
         view_layout=QVBoxLayout(view);view_layout.setContentsMargins(24,10,24,10)
