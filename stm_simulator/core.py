@@ -128,12 +128,3 @@ def simulate(volume, mode="current", height=4., threshold=0.001,
         np.divide(threshold-first, second-first, out=fraction, where=crossing)
         result[crossing] = (z[outer]+fraction*(z[inner]-z[outer]))[crossing]
     return result, None
-
-
-def demo_volume():
-    lattice = np.diag([24., 24., 30.])
-    x, y, z = np.meshgrid(np.arange(96)/96*24, np.arange(96)/96*24,
-                           np.arange(180)/180*30, indexing="ij")
-    surface = 12 + .7*np.cos(2*np.pi*x/8)*np.cos(2*np.pi*y/8)
-    values = np.exp(-1.7*np.abs(z-surface))
-    return Volume(lattice, np.array([[.5, .5, .4]]), values, "Analytic demo")

@@ -11,7 +11,7 @@ python run.py
 
 Windows 双击 `start.vbs` 无控制台启动，失败时查看 `startup-error.log`。
 
-Python 3.10+，需要 PyQt6、NumPy、SciPy。先点击“载入演示”验证界面，再打开 PARCHG。
+Python 3.10+，需要 PyQt6、NumPy、SciPy。点击“打开文件”载入 PARCHG，设置参数后运行模拟。
 
 ## 模型
 

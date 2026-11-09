@@ -8,7 +8,7 @@ from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QSplitter, QFileDialog, QMessageBox, QScrollArea)
-from .core import read_parchg, simulate, demo_volume
+from .core import read_parchg, simulate
 from .widgets import ChevronComboBox, NumericBox
 
 STYLE = """
@@ -54,7 +54,7 @@ class ImageView(QWidget):
         painter.fillRect(self.rect(), QColor("#111111"))
         if self.image is None:
             painter.setPen(QColor("#808080"))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 或载入演示数据")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 文件开始模拟")
             return
         scale = min((self.width()-70)/self.image.width(),(self.height()-70)/self.image.height())
         width, height = int(self.image.width()*scale),int(self.image.height()*scale)
@@ -110,7 +110,7 @@ class App(QMainWindow):
         layout=QVBoxLayout(root);layout.setContentsMargins(8,6,8,6);layout.setSpacing(8)
         toolbar=QHBoxLayout();toolbar.setSpacing(8)
         title=QLabel("STM Simulator");title.setFont(QFont("Microsoft YaHei UI",11,QFont.Weight.Bold));toolbar.addWidget(title);toolbar.addSpacing(20)
-        for text,callback in [("打开文件",self.open_file),("演示数据",self.demo),("导出图像",self.export_image),("导出数据",self.export_data),("帮助",self.show_help)]:
+        for text,callback in [("打开文件",self.open_file),("导出图像",self.export_image),("导出数据",self.export_data),("帮助",self.show_help)]:
             button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
         toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#83bd8b");toolbar.addWidget(state)
         layout.addLayout(toolbar)
@@ -189,9 +189,6 @@ class App(QMainWindow):
         self.volume=volume;self.result=None;self.image.image=None;self.image.update()
         self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
         self.summary.setText("等待模拟");self.status.setText("已载入第一数据块 · 总部分密度")
-
-    def demo(self):
-        if not self.busy:self.loaded(demo_volume());self.run()
 
     def run(self):
         if self.volume is None or self.busy:return
