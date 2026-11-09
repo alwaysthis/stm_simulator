@@ -40,3 +40,5 @@ python -m unittest discover -s tests -v
 界面改为 PyQt6，移除底部日志，采用参考控制面板的 8px 面板圆角、4px 卡片圆角、10px 标签顶角与中性深灰配色。
 
 默认恒流引擎是 p4vasp 线性移植，保留最低平均密度层起点、周期边界与首次达到阈值规则。无交点用 NaN，未移植三次模式。完整出处与许可证见 THIRD_PARTY.md。限定真空引擎仍可选择。
+
+项目记忆入口见 `.memory/AGENTS.md`，界面约定见 `.memory/designs/ui.md`。

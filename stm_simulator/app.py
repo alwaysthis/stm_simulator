@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QTabWidget, QSplitter, QFileDialog, QMessageBox, QScrollArea)
 from .core import read_parchg, simulate, demo_volume
+from .widgets import ChevronComboBox, NumericBox, WorkspaceTabBar
 
 STYLE = """
 QMainWindow, QWidget {background:#242424;color:#ffffff;font-family:'Microsoft YaHei UI';font-size:13px;}
@@ -24,15 +25,22 @@ QPushButton#primary {background:#3d6a9a;border-color:#4a90d9;}
 QPushButton#primary:hover {background:#4a90d9;}
 QPushButton#rail {background:transparent;border:none;border-radius:6px;padding:12px 6px;color:#9e9e9e;}
 QPushButton#rail:checked {background:#3d6a9a;color:white;}
-QLineEdit,QComboBox {background:#1e1e1e;border:1px solid #3a3a3a;border-radius:4px;padding:5px 7px;min-height:20px;selection-background-color:#4a90d9;}
-QLineEdit:focus,QComboBox:focus {border-color:#4a90d9;}
+QLineEdit,QComboBox,QDoubleSpinBox {background:#1e1e1e;border:1px solid #3a3a3a;border-radius:4px;padding:3px 8px;min-height:20px;selection-background-color:#4a90d9;}
+QLineEdit:focus,QComboBox:focus,QDoubleSpinBox:focus {border-color:#4a90d9;}
+QLineEdit:hover,QComboBox:hover,QDoubleSpinBox:hover {border-color:#4a90d9;background:#242424;}
+QLineEdit:disabled,QComboBox:disabled,QDoubleSpinBox:disabled {color:#666666;border-color:#303030;}
+QComboBox::down-arrow {image:none;}
+QComboBox QAbstractItemView {background:#1e1e1e;color:#ffffff;border:1px solid #3a3a3a;selection-background-color:#3d6a9a;outline:none;padding:4px;}
+QComboBox QAbstractItemView::item {min-height:26px;padding:3px 8px;}
+QDoubleSpinBox::up-button {width:18px;border:none;border-top-right-radius:4px;}
+QDoubleSpinBox::down-button {width:18px;border:none;border-bottom-right-radius:4px;}
+QDoubleSpinBox::up-button:hover,QDoubleSpinBox::down-button:hover {background:#3c3c3c;}
 QComboBox::drop-down {border:none;width:22px;}
-QTabWidget {background:#242424;border:none;}
-QTabWidget::pane {border:1px solid #303030;border-top:none;border-radius:8px;background:#222222;top:-1px;}
+QTabWidget {background:#303030;border:none;}
+QTabWidget::pane {border:none;border-radius:8px;background:#222222;top:0px;}
+QTabWidget::tab-bar {left:0px;}
 QTabBar {background:#303030;}
-QTabBar::tab {background:transparent;color:#9e9e9e;border:none;border-top-left-radius:10px;border-top-right-radius:10px;padding:9px 22px;margin-right:3px;}
-QTabBar::tab:selected {background:#222222;color:#ffffff;}
-QTabBar::tab:hover:!selected {background:#3c3c3c;color:#ffffff;}
+QTabBar::tab {background:transparent;border:none;padding:0;margin:0;}
 QScrollArea {border:none;background:transparent;}
 QScrollBar:vertical {background:transparent;width:6px;}
 QScrollBar::handle:vertical {background:#4a4a4a;border-radius:3px;min-height:25px;}
@@ -116,14 +124,14 @@ class App(QMainWindow):
         body=QHBoxLayout();body.setSpacing(8);layout.addLayout(body,1)
         rail=QVBoxLayout();button=QPushButton("STM");button.setObjectName("rail");button.setCheckable(True);button.setChecked(True);rail.addWidget(button);rail.addStretch();body.addLayout(rail)
         split=QSplitter();body.addWidget(split,1)
-        self.tabs=QTabWidget();self.tabs.setDocumentMode(True);split.addWidget(self.tabs)
+        self.tabs=QTabWidget();self.tabs.setTabBar(WorkspaceTabBar());self.tabs.setDocumentMode(True);split.addWidget(self.tabs)
         view=QWidget();view.setStyleSheet("background:#222222;")
-        view_layout=QVBoxLayout(view);view_layout.setContentsMargins(8,8,8,8)
+        view_layout=QVBoxLayout(view);view_layout.setContentsMargins(24,10,24,10)
         self.summary=QLabel("等待数据");self.summary.setObjectName("muted");view_layout.addWidget(self.summary)
         self.readout=QLabel("x  —     y  —     值  —");self.readout.setObjectName("muted")
         self.image=ImageView(self.readout);view_layout.addWidget(self.image,1);view_layout.addWidget(self.readout)
         self.tabs.addTab(view,"STM 图像")
-        help_page=QWidget();help_layout=QVBoxLayout(help_page)
+        help_page=QWidget();help_page.setStyleSheet("background:#222222;");help_layout=QVBoxLayout(help_page);help_layout.setContentsMargins(24,10,24,10)
         help_text=QLabel("Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。")
         help_text.setWordWrap(True);help_layout.addWidget(help_text);help_layout.addStretch();self.tabs.addTab(help_page,"方法说明")
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setMinimumWidth(290);scroll.setMaximumWidth(360)
@@ -131,13 +139,13 @@ class App(QMainWindow):
         controls=QVBoxLayout(panel);controls.setContentsMargins(12,12,12,12);controls.setSpacing(12)
         controls.addWidget(QLabel("模拟设置"))
         self.run_button=QPushButton("运行模拟");self.run_button.setObjectName("primary");self.run_button.clicked.connect(self.run);controls.addWidget(self.run_button)
-        source=self.card(controls,"数据源");self.file_label=QLabel("尚未载入 PARCHG");self.file_label.setWordWrap(True);self.file_label.setObjectName("muted");source.addRow(self.file_label)
+        source=self.card(controls,"数据源");self.file_label=QLabel("尚未载入 PARCHG");self.file_label.setWordWrap(True);self.file_label.setMinimumHeight(64);self.file_label.setObjectName("muted");source.addRow(self.file_label)
         form=self.card(controls,"扫描参数")
         self.mode=self.combo(form,"扫描模式",["恒流","恒高"])
         self.engine=self.combo(form,"搜索算法",["p4vasp 线性","限定真空 · 线性"])
         self.side=self.combo(form,"扫描表面",["上表面 / −c","下表面 / +c"])
-        self.threshold=self.entry(form,"等密度阈值","0.001")
-        self.height=self.entry(form,"距外层原子 / Å","4.0")
+        self.threshold=self.entry(form,"等密度阈值","0.001");self.threshold.setRange(1e-10,1e12);self.threshold.setSingleStep(.0001)
+        self.height=self.entry(form,"距外层原子 / Å","4.0");self.height.setSingleStep(.1)
         self.sigma=self.entry(form,"平滑 / 网格 σ","0")
         bounds=self.card(controls,"限定真空范围 · 留空自动")
         self.zmin=self.entry(bounds,"z 下界 / Å","");self.zmax=self.entry(bounds,"z 上界 / Å","")
@@ -151,10 +159,14 @@ class App(QMainWindow):
         form=QFormLayout();form.setSpacing(8);form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows);box.addLayout(form);parent.addWidget(frame);return form
 
     def entry(self,form,label,value):
-        entry=QLineEdit(value);form.addRow(label,entry);return entry
+        entry=NumericBox(value) if value else QLineEdit()
+        if not value:
+            entry.setPlaceholderText("自动")
+        form.addRow(label,entry)
+        return entry
 
     def combo(self,form,label,values):
-        combo=QComboBox();combo.addItems(values);form.addRow(label,combo);return combo
+        combo=ChevronComboBox();combo.addItems(values);form.addRow(label,combo);return combo
 
     def sync_controls(self):
         current=self.mode.currentIndex()==0
@@ -192,6 +204,8 @@ class App(QMainWindow):
 
     def run(self):
         if self.volume is None or self.busy:return
+        for field in (self.threshold,self.height,self.sigma):
+            field.interpretText()
         try:
             bounded=self.engine.currentIndex()==1
             parameters=dict(mode="current" if self.mode.currentIndex()==0 else "height",engine="bounded" if bounded else "p4vasp",side="top" if self.side.currentIndex()==0 else "bottom",threshold=float(self.threshold.text()),height=float(self.height.text()),sigma=float(self.sigma.text()),z_min=float(self.zmin.text()) if bounded and self.zmin.text().strip() else None,z_max=float(self.zmax.text()) if bounded and self.zmax.text().strip() else None)
