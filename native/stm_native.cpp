@@ -39,13 +39,18 @@ API void constant_current(const double* data, size_t nx, size_t ny, size_t nz,
         for (size_t y = 0; y < ny; ++y) {
             double height = std::numeric_limits<double>::quiet_NaN();
             const double* column = data + x*sx + y*sy;
-            for (long long offset = 0; offset < count; ++offset) {
+            if (column[wrap(start)*sz] >= threshold) {
+                output[x*ny+y] = height;
+                continue;
+            }
+            for (long long offset = 1; offset < count; ++offset) {
                 const long long inner = start + step*offset;
                 const long long outer = inner-step;
                 const double y1 = column[wrap(inner)*sz];
                 if (y1 >= threshold) {
                     const double y2 = column[wrap(outer)*sz];
-                    const double fraction = y1 == y2 ? 0.0 : (threshold-y1)/(y2-y1);
+                    if (y2 >= threshold) continue;
+                    const double fraction = (threshold-y1)/(y2-y1);
                     height = (inner+(outer-inner)*fraction)*cell_height/nz;
                     break;
                 }

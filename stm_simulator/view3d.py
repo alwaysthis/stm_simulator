@@ -88,6 +88,21 @@ class SurfaceView(gl.GLViewWidget):
         self.atom_labels = []
         self.update()
 
+    def show_structure(self, volume):
+        self.clear()
+        self.atom_positions = volume.positions @ volume.lattice
+        elements, self.atom_colors, self.atom_radii = atom_styles(volume)
+        self.atom_labels = list(zip(self.atom_positions, elements))
+        self.atom_artist = GlossyAtoms(self.atom_positions, self.atom_colors, self.atom_radii)
+        self.atom_artist.setVisible(self.show_atoms)
+        self.addItem(self.atom_artist)
+        low, high = self.atom_positions.min(axis=0), self.atom_positions.max(axis=0)
+        span = np.maximum(high-low, .5)
+        self._draw_axes(low, high, span)
+        self.opts['center'] = QVector3D(*((low+high)/2))
+        self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05), elevation=25, azimuth=-55)
+        self.update()
+
     def set_atoms_visible(self, visible):
         self.show_atoms = visible
         if self.atom_artist is not None:

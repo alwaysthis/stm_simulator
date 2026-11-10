@@ -17,13 +17,14 @@ def constant_current(data, cell_height, threshold, direction=-1, start=None):
     if native_backend.AVAILABLE:
         return native_backend.constant_current(data, cell_height, threshold, step, start)
     result = np.full(data.shape[:2], np.nan)
+    valid_start = data[:, :, start % nz] < threshold
     count = nz+1 if step < 0 else nz
     for offset in range(count):
         inner = start + step*offset
         outer = inner-step
         y1 = data[:, :, inner % nz]
         y2 = data[:, :, outer % nz]
-        found = np.isnan(result) & (y1 >= threshold)
+        found = valid_start & np.isnan(result) & (y2 < threshold) & (y1 >= threshold)
         fraction = np.zeros_like(y1)
         np.divide(threshold-y1, y2-y1, out=fraction, where=found & (y2 != y1))
         height = (inner + (outer-inner)*fraction)*cell_height/nz

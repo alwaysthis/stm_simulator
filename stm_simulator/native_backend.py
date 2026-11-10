@@ -5,7 +5,7 @@ import sys
 import numpy as np
 
 _library = None
-_path = Path(__file__).with_name("_stm_native.dll" if sys.platform == "win32" else "_stm_native.so")
+_path = Path(__file__).with_name("_stm_native_v2.dll" if sys.platform == "win32" else "_stm_native_v2.so")
 try:
     _library = ctypes.CDLL(str(_path))
 except OSError:

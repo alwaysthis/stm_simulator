@@ -358,9 +358,12 @@ class App(QMainWindow):
         self.volume=volume;self.result=None;self.image.image=None;self.image.update()
         self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
         self.update_slider_ranges()
-        self.surface.clear()
+        self.surface.show_structure(volume)
         self.readout.setText("x  —     y  —     值  —")
         self.summary.setText("等待模拟");self.status.setText("已载入第一数据块 · 总部分密度")
+        minimum, maximum = float(volume.values.min()), float(volume.values.max())
+        if minimum < -max(1e-8, abs(maximum)*1e-4):
+            self.status.setText(f"数据含明显负值 {minimum:.5g}，请核对总部分电荷密度来源；原子结构已显示")
 
     def open_heights(self):
         if self.busy:
@@ -416,7 +419,7 @@ class App(QMainWindow):
         self.result,self.plane_height=output;self.parameters=parameters
         finite=self.result[np.isfinite(self.result)]
         if not finite.size:
-            self.result=None;self.image.image=None;self.image.update();self.surface.clear();self.status.setText("没有交点，请调整阈值或范围");return
+            self.result=None;self.image.image=None;self.image.update();self.surface.show_structure(self.volume);self.status.setText("没有有效交点：起始密度必须低于阈值，请检查数据、阈值和搜索范围");return
         self.unit="Å" if parameters["mode"]=="current" else "raw density"
         self.summary.setText(f"{'恒流' if parameters['mode'] == 'current' else ('高度文件' if parameters['mode'] == 'height_map' else '恒高')}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
         self.status.setText(f"完成    ·    起伏 {np.ptp(finite):.5g} {self.unit}    ·    无交点 {100*np.isnan(self.result).mean():.1f}%")
