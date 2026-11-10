@@ -11,7 +11,7 @@ class ChevronComboBox(QComboBox):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor("#c8c8c8" if self.isEnabled() else "#666666"), 1.6))
+        painter.setPen(QPen(QColor("#526174" if self.isEnabled() else "#a4afbd"), 1.6))
         x, y = self.width()-17, self.height()//2
         painter.drawLine(x-5, y-2, x, y+3)
         painter.drawLine(x, y+3, x+5, y-2)

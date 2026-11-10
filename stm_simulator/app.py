@@ -14,40 +14,40 @@ from .view3d import SurfaceView
 from .colors import ColorScale, PALETTES
 
 STYLE = """
-QMainWindow, QWidget {background:#242424;color:#ffffff;font-family:'Microsoft YaHei UI';font-size:13px;}
-QFrame#panel {background:#1c1c1c;border:1px solid #303030;border-radius:8px;}
-QFrame#card {background:#1c1c1c;border:1px solid #303030;border-radius:4px;}
+QMainWindow, QWidget {background:#f1f4f8;color:#243244;font-family:'Microsoft YaHei UI';font-size:13px;}
+QFrame#panel {background:#ffffff;border:1px solid #d9e1eb;border-radius:8px;}
+QFrame#card {background:#ffffff;border:1px solid #d9e1eb;border-radius:4px;}
 QLabel {background:transparent;border:none;}
-QLabel#muted {color:#9e9e9e;}
-QPushButton {background:#4a4a4a;border:1px solid #3a3a3a;border-radius:4px;padding:6px 12px;}
-QPushButton:hover {background:#5a5a5a;border-color:#4a90d9;}
-QPushButton:pressed {background:#333333;}
-QPushButton:disabled {color:#777777;}
-QPushButton#primary {background:#3d6a9a;border-color:#4a90d9;}
+QLabel#muted {color:#627187;}
+QPushButton {background:#e3e9f1;border:1px solid #c8d2df;border-radius:4px;padding:6px 12px;}
+QPushButton:hover {background:#d7e4f3;border-color:#4a90d9;}
+QPushButton:pressed {background:#c3d5eb;}
+QPushButton:disabled {color:#9aa6b5;}
+QPushButton#primary {color:white;background:#3979bd;border-color:#4a90d9;}
 QPushButton#primary:hover {background:#4a90d9;}
-QLineEdit,QComboBox,QDoubleSpinBox {background:#1e1e1e;border:1px solid #3a3a3a;border-radius:4px;padding:3px 8px;min-height:20px;selection-background-color:#4a90d9;}
+QLineEdit,QComboBox,QDoubleSpinBox {background:#ffffff;border:1px solid #c8d2df;border-radius:4px;padding:3px 8px;min-height:20px;selection-background-color:#4a90d9;}
 QLineEdit:focus,QComboBox:focus,QDoubleSpinBox:focus {border-color:#4a90d9;}
-QLineEdit:hover,QComboBox:hover,QDoubleSpinBox:hover {border-color:#4a90d9;background:#242424;}
-QLineEdit:disabled,QComboBox:disabled,QDoubleSpinBox:disabled {color:#666666;border-color:#303030;}
+QLineEdit:hover,QComboBox:hover,QDoubleSpinBox:hover {border-color:#4a90d9;background:#f1f4f8;}
+QLineEdit:disabled,QComboBox:disabled,QDoubleSpinBox:disabled {color:#a4afbd;border-color:#d9e1eb;}
 QComboBox::down-arrow {image:none;}
-QComboBox QAbstractItemView {background:#1e1e1e;color:#ffffff;border:1px solid #3a3a3a;selection-background-color:#3d6a9a;outline:none;padding:4px;}
+QComboBox QAbstractItemView {background:#ffffff;color:#243244;border:1px solid #c8d2df;selection-background-color:#3979bd;outline:none;padding:4px;}
 QComboBox QAbstractItemView::item {min-height:26px;padding:3px 8px;}
 QDoubleSpinBox::up-button {width:18px;border:none;border-top-right-radius:4px;}
 QDoubleSpinBox::down-button {width:18px;border:none;border-bottom-right-radius:4px;}
-QDoubleSpinBox::up-button:hover,QDoubleSpinBox::down-button:hover {background:#3c3c3c;}
+QDoubleSpinBox::up-button:hover,QDoubleSpinBox::down-button:hover {background:#e7eef7;}
 QComboBox::drop-down {border:none;width:22px;}
 QScrollArea {border:none;background:transparent;}
 QScrollBar:vertical {background:transparent;width:6px;}
-QScrollBar::handle:vertical {background:#4a4a4a;border-radius:3px;min-height:25px;}
+QScrollBar::handle:vertical {background:#e3e9f1;border-radius:3px;min-height:25px;}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {height:0;}
-QSlider::groove:horizontal {height:4px;background:#3a3a3a;border-radius:2px;}
-QSlider::sub-page:horizontal {background:#3d6a9a;border-radius:2px;}
+QSlider::groove:horizontal {height:4px;background:#c8d2df;border-radius:2px;}
+QSlider::sub-page:horizontal {background:#3979bd;border-radius:2px;}
 QSlider::handle:horizontal {background:#9dc2e8;width:12px;margin:-5px 0;border-radius:6px;}
-QSlider::sub-page:horizontal:disabled {background:#3a3a3a;}
-QSlider::handle:horizontal:disabled {background:#666666;}
-QProgressBar {border:1px solid #3a3a3a;border-radius:4px;text-align:center;min-height:18px;}
-QProgressBar::chunk {background:#3d6a9a;border-radius:3px;}
-QSplitter::handle {background:#242424;width:8px;}
+QSlider::sub-page:horizontal:disabled {background:#c8d2df;}
+QSlider::handle:horizontal:disabled {background:#a4afbd;}
+QProgressBar {border:1px solid #c8d2df;border-radius:4px;text-align:center;min-height:18px;}
+QProgressBar::chunk {background:#3979bd;border-radius:3px;}
+QSplitter::handle {background:#f1f4f8;width:8px;}
 """
 
 class ImageView(QWidget):
@@ -60,7 +60,7 @@ class ImageView(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#111111"))
+        painter.fillRect(self.rect(), QColor("#ffffff"))
         if self.image is None:
             painter.setPen(QColor("#808080"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 文件开始模拟")
@@ -71,7 +71,7 @@ class ImageView(QWidget):
         x, y = max(10, (self.width()-140-width)//2), max(35, (self.height()-height-20)//2)
         self.rect_image = (x, y, width, height)
         painter.drawPixmap(x, y, width, height, QPixmap.fromImage(self.image))
-        painter.setPen(QColor("#9e9e9e"))
+        painter.setPen(QColor("#627187"))
         painter.drawText(x, y+height+22, "x / y (Å)    洋红 → 无交点")
         bar_x, bar_width = x+width+18, 16
         gradient = QLinearGradient(bar_x, y+height, bar_x, y)
@@ -79,7 +79,7 @@ class ImageView(QWidget):
         for stop, rgba in zip(np.linspace(0, 1, 65), self.color_scale.rgba(levels)):
             gradient.setColorAt(float(stop), QColor.fromRgbF(*rgba))
         painter.fillRect(bar_x, y, bar_width, height, gradient)
-        painter.setPen(QPen(QColor("#aaaaaa"), 1))
+        painter.setPen(QPen(QColor("#627187"), 1))
         painter.drawRect(bar_x, y, bar_width, height)
         ticks = [.5] if self.color_scale.low == self.color_scale.high else np.linspace(0, 1, 5)
         for fraction in ticks:
@@ -116,7 +116,7 @@ class ImageView(QWidget):
         mask=np.all((fractional>=0)&(fractional<=1),axis=-1)
         ij=np.clip((fractional*np.array(result.shape)).astype(int),0,np.array(result.shape)-1)
         self.pixels=np.ascontiguousarray(rgb[ij[:,:,0],ij[:,:,1]])
-        self.pixels[~mask]=[17,17,17]
+        self.pixels[~mask]=[255,255,255]
         self.image=QImage(self.pixels.data,shape[0],shape[1],shape[0]*3,QImage.Format.Format_RGB888).copy()
         self.update()
 
@@ -144,11 +144,11 @@ class App(QMainWindow):
         title=QLabel("STM Simulator");title.setFont(QFont("Microsoft YaHei UI",11,QFont.Weight.Bold));toolbar.addWidget(title);toolbar.addSpacing(20)
         for text,callback in [("打开文件",self.open_file),("导入高度",self.open_heights),("导出图像",self.export_image),("导出数据",self.export_data),("帮助",self.show_help)]:
             button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
-        toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#83bd8b");toolbar.addWidget(state)
+        toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#39835d");toolbar.addWidget(state)
         layout.addLayout(toolbar)
         body=QHBoxLayout();body.setSpacing(8);layout.addLayout(body,1)
         split=QSplitter();body.addWidget(split,1)
-        view=QWidget();view.setStyleSheet("background:#222222;")
+        view=QWidget();view.setStyleSheet("background:#f5f7fa;")
         view_layout=QVBoxLayout(view);view_layout.setContentsMargins(24,10,24,10)
         self.summary=QLabel("等待数据");self.summary.setObjectName("muted");view_layout.addWidget(self.summary)
         self.readout=QLabel("x  —     y  —     值  —");self.readout.setObjectName("muted")

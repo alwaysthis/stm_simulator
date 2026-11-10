@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QVector3D, QFont, QPainter, QColor, QMatrix4x4
 import pyqtgraph.opengl as gl
 from .elements import atom_styles
+from .atoms import GlossyAtoms
 
 
 class AxisLabels(QWidget):
@@ -25,7 +26,7 @@ class AxisLabels(QWidget):
         screen.viewport(0, self.height(), self.width(), -self.height())
         transform = screen * view.projectionMatrix(viewport, viewport) * view.viewMatrix()
         painter = QPainter(self)
-        painter.setPen(QColor("#b0b0b0"))
+        painter.setPen(QColor("#526174"))
         painter.setFont(QFont("Arial", 8))
         metrics = painter.fontMetrics()
         occupied = []
@@ -55,8 +56,8 @@ class AxisLabels(QWidget):
                 x = max(2, x)
                 y = int(np.clip(point.y()-radius-3, metrics.height(), self.height()-3))
                 rect = QRect(x-2, y-metrics.ascent()-2, metrics.horizontalAdvance(text)+6, metrics.height()+2)
-                painter.fillRect(rect, QColor(20, 20, 20, 190))
-                painter.setPen(QColor("#ffffff"))
+                painter.fillRect(rect, QColor(255, 255, 255, 220))
+                painter.setPen(QColor("#243244"))
                 painter.drawText(x, y, text)
         painter.end()
 
@@ -65,7 +66,7 @@ class SurfaceView(gl.GLViewWidget):
     def __init__(self):
         super().__init__()
         self.setMinimumSize(170, 260)
-        self.setBackgroundColor("#222222")
+        self.setBackgroundColor("#f5f7fa")
         self.atom_artist = None
         self.show_atoms = True
         self.show_atom_labels = False
@@ -124,9 +125,7 @@ class SurfaceView(gl.GLViewWidget):
         self.atom_positions = volume.positions @ volume.lattice
         elements, self.atom_colors, self.atom_radii = atom_styles(volume)
         self.atom_labels = list(zip(self.atom_positions, elements))
-        self.atom_artist = gl.GLScatterPlotItem(pos=self.atom_positions.astype(np.float32),
-                                               color=self.atom_colors, size=self.atom_radii*2,
-                                               pxMode=False, glOptions="opaque")
+        self.atom_artist = GlossyAtoms(self.atom_positions, self.atom_colors, self.atom_radii)
         self.atom_artist.setVisible(self.show_atoms)
         self.addItem(self.atom_artist)
         points = np.concatenate((self.surface_vertices[valid], self.atom_positions))
@@ -146,7 +145,7 @@ class SurfaceView(gl.GLViewWidget):
             end = origin.copy()
             end[axis] = high[axis]+span[axis]*.08
             self.addItem(gl.GLLinePlotItem(pos=np.array([origin, end], dtype=np.float32),
-                                          color=(.55, .55, .55, 1), width=1, antialias=False))
+                                          color=(.4, .45, .52, 1), width=1, antialias=False))
             self.axis_labels.append((end, f"{label[0]} {high[axis]:.3g} Å"))
             for value in [float((low[axis]+high[axis])/2)]:
                 position = origin.copy()
