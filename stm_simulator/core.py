@@ -150,3 +150,19 @@ def simulate(volume, mode="current", height=4., threshold=0.001,
         np.divide(threshold-first, second-first, out=fraction, where=crossing)
         result[crossing] = (z[outer]+fraction*(z[inner]-z[outer]))[crossing]
     return result, None
+
+
+def sample_heights(volume, heights):
+    """Sample raw density along a per-pixel Cartesian z map, periodically."""
+    lattice = volume.lattice
+    if not (np.allclose(lattice[:2, 2], 0) and np.allclose(lattice[2, :2], 0) and lattice[2, 2] > 0):
+        raise ValueError("Requires a,b in xy and positive c along z")
+    if heights.shape != volume.values.shape[:2]:
+        raise ValueError("Height grid does not match density")
+    valid = np.isfinite(heights)
+    coordinate = np.where(valid, heights, 0) % lattice[2, 2] / lattice[2, 2] * volume.values.shape[2]
+    inner = np.floor(coordinate).astype(int) % volume.values.shape[2]
+    fraction = coordinate-np.floor(coordinate)
+    i, j = np.indices(heights.shape)
+    result = volume.values[i, j, inner]*(1-fraction) + volume.values[i, j, (inner+1)%volume.values.shape[2]]*fraction
+    return np.where(valid, result, np.nan)

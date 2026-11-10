@@ -104,7 +104,7 @@ class SurfaceView(gl.GLViewWidget):
         i, j = np.meshgrid(*indices, indexing="ij")
         xy = np.stack((i/result.shape[0], j/result.shape[1]), axis=-1) @ volume.lattice[:2, :2]
         values = result[np.ix_(*indices)]
-        z = values if plane_height is None else np.full_like(values, plane_height)
+        z = values if plane_height is None else (np.asarray(plane_height)[np.ix_(*indices)] if np.ndim(plane_height) == 2 else np.full_like(values, plane_height))
         z = np.where(np.isfinite(values), z, np.nan)
         self.surface_vertices = np.column_stack((xy.reshape(-1, 2), z.ravel()))
         rows, columns = values.shape

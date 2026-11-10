@@ -8,7 +8,7 @@ from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradien
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar, QSlider)
-from .core import read_parchg, simulate
+from .core import read_parchg, simulate, sample_heights
 from .widgets import ChevronComboBox, NumericBox
 from .view3d import SurfaceView
 from .colors import ColorScale, PALETTES
@@ -142,7 +142,7 @@ class App(QMainWindow):
         layout=QVBoxLayout(root);layout.setContentsMargins(8,6,8,6);layout.setSpacing(8)
         toolbar=QHBoxLayout();toolbar.setSpacing(8)
         title=QLabel("STM Simulator");title.setFont(QFont("Microsoft YaHei UI",11,QFont.Weight.Bold));toolbar.addWidget(title);toolbar.addSpacing(20)
-        for text,callback in [("打开文件",self.open_file),("导出图像",self.export_image),("导出数据",self.export_data),("帮助",self.show_help)]:
+        for text,callback in [("打开文件",self.open_file),("导入高度",self.open_heights),("导出图像",self.export_image),("导出数据",self.export_data),("帮助",self.show_help)]:
             button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
         toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#83bd8b");toolbar.addWidget(state)
         layout.addLayout(toolbar)
@@ -196,7 +196,7 @@ class App(QMainWindow):
         self.run_button=QPushButton("运行模拟");self.run_button.setObjectName("primary");self.run_button.clicked.connect(self.run);controls.addWidget(self.run_button)
         source=self.card(controls,"数据源");self.file_label=QLabel("尚未载入 PARCHG");self.file_label.setWordWrap(True);self.file_label.setMinimumHeight(64);self.file_label.setObjectName("muted");source.addRow(self.file_label)
         form=self.card(controls,"扫描参数")
-        self.mode=self.combo(form,"扫描模式",["恒流","恒高"])
+        self.mode=self.combo(form,"扫描模式",["恒流","恒高","高度文件"])
         self.engine=self.combo(form,"搜索算法",["p4vasp 线性","限定真空 · 线性"])
         self.side=self.combo(form,"扫描表面",["上表面 / −c","下表面 / +c"])
         self.side.setToolTip("上表面从真空沿 −c 搜索，下表面沿 +c 搜索。指定(hkl)晶面需先构建并计算该晶面的slab。")
@@ -262,8 +262,8 @@ class App(QMainWindow):
     def sync_controls(self):
         current=self.mode.currentIndex()==0
         self.signal_slider.setEnabled(current)
-        self.height_slider.setEnabled(not current)
-        self.threshold.setEnabled(current);self.height.setEnabled(not current);self.engine.setEnabled(current)
+        self.height_slider.setEnabled(self.mode.currentIndex()==1)
+        self.threshold.setEnabled(current);self.height.setEnabled(self.mode.currentIndex()==1);self.engine.setEnabled(current)
         for entry in (self.zmin,self.zmax): entry.setEnabled(current and self.engine.currentIndex()==1)
 
     def restore_file(self):
@@ -353,6 +353,8 @@ class App(QMainWindow):
         if path:
             self.settings.setValue("last_file", str(Path(path).resolve()))
             self.settings.sync()
+        if hasattr(self, "height_map"):
+            del self.height_map
         self.volume=volume;self.result=None;self.image.image=None;self.image.update()
         self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
         self.update_slider_ranges()
@@ -360,8 +362,43 @@ class App(QMainWindow):
         self.readout.setText("x  —     y  —     值  —")
         self.summary.setText("等待模拟");self.status.setText("已载入第一数据块 · 总部分密度")
 
+    def open_heights(self):
+        if self.busy:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "选择高度文件", self.settings.value("last_directory", ""), "Height archive (*.npz)")
+        if not path:
+            return
+        try:
+            with np.load(path, allow_pickle=False) as data:
+                if str(data['unit']) != 'Å':
+                    raise ValueError("高度文件单位必须为 Å，请使用恒流模式导出的 NPZ")
+                heights = np.array(data['values'], dtype=float)
+                lattice = np.array(data['lattice'], dtype=float)
+            if heights.ndim != 2 or not np.isfinite(heights).any() or np.isinf(heights).any():
+                raise ValueError("高度文件需要包含二维高度数组")
+            if self.volume is None:
+                raise ValueError("请先打开对应的 PARCHG，再导入恒流高度文件")
+            if lattice.shape != (3, 3) or not np.allclose(lattice, self.volume.lattice):
+                raise ValueError("高度文件与当前 PARCHG 的晶格不一致")
+            if heights.shape != self.volume.values.shape[:2]:
+                raise ValueError("高度文件与当前 PARCHG 的面内网格不一致")
+            self.height_map = heights
+            self.mode.setCurrentIndex(2)
+            self.run()
+        except (ValueError, KeyError, OSError) as error:
+            QMessageBox.warning(self, "高度文件", str(error))
+
     def run(self):
         if self.volume is None or self.busy:return
+        if self.mode.currentIndex() == 2:
+            if not hasattr(self, "height_map"):
+                self.open_heights()
+                return
+            volume, heights = self.volume, self.height_map.copy()
+            parameters = dict(mode="height_map", engine="height_file")
+            self.background(lambda: (sample_heights(volume, heights), heights),
+                            lambda output: self.calculated(output, parameters))
+            return
         self.preview_timer.stop()
         for field in (self.threshold,self.height,self.sigma):
             field.interpretText()
@@ -381,7 +418,7 @@ class App(QMainWindow):
         if not finite.size:
             self.result=None;self.image.image=None;self.image.update();self.surface.clear();self.status.setText("没有交点，请调整阈值或范围");return
         self.unit="Å" if parameters["mode"]=="current" else "raw density"
-        self.summary.setText(f"{'恒流' if parameters['mode'] == 'current' else '恒高'}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
+        self.summary.setText(f"{'恒流' if parameters['mode'] == 'current' else ('高度文件' if parameters['mode'] == 'height_map' else '恒高')}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
         self.status.setText(f"完成    ·    起伏 {np.ptp(finite):.5g} {self.unit}    ·    无交点 {100*np.isnan(self.result).mean():.1f}%")
         self.refresh_colors()
 

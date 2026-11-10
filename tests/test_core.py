@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import numpy as np
-from stm_simulator.core import Volume, read_parchg, simulate
+from stm_simulator.core import Volume, read_parchg, simulate, sample_heights
 
 class CoreTests(unittest.TestCase):
     def test_vasp_order_and_spin_block(self):
@@ -67,6 +67,13 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(top[0,0], -3.5)
         self.assertEqual(bottom[0,0], 1.5)
         self.assertTrue(np.isnan(constant_current(data,6.,4.)).all())
+
+    def test_height_map_interpolation_and_periodic_branch(self):
+        volume = Volume(np.diag([2., 2., 10.]), np.array([[.5, .5, .2]]),
+                        np.broadcast_to(np.arange(10), (2, 2, 10)).copy(), "test")
+        heights = np.array([[2.5, 3.2], [-.5, np.nan]])
+        np.testing.assert_allclose(sample_heights(volume, heights),
+                                   [[2.5, 3.2], [4.5, np.nan]], equal_nan=True)
 
     def test_constant_height(self):
         z = np.arange(40)*.5
