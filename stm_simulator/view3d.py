@@ -29,19 +29,6 @@ class AxisLabels(QWidget):
         painter.setPen(QColor("#526174"))
         painter.setFont(QFont("Arial", 8))
         metrics = painter.fontMetrics()
-        occupied = []
-        for position, text in view.axis_labels:
-            point = transform.map(QVector3D(*position))
-            x = int(np.clip(point.x()+3, 2, max(2, self.width()-metrics.horizontalAdvance(text)-2)))
-            y = int(np.clip(point.y()-3, metrics.height(), self.height()-3))
-            for offset in (0, 16, -16, 32, -32):
-                candidate_y = int(np.clip(y+offset, metrics.height(), self.height()-3))
-                rect = QRect(x, candidate_y-metrics.height(), metrics.horizontalAdvance(text)+4, metrics.height()+3)
-                if not any(rect.intersects(other) for other in occupied):
-                    y = candidate_y
-                    occupied.append(rect)
-                    break
-            painter.drawText(x, y, text)
         if view.show_atom_labels and view.atom_labels:
             pixel_sizes = np.asarray(view.pixelSize(view.atom_positions))
             for index, (position, text) in enumerate(view.atom_labels):
@@ -65,7 +52,8 @@ class AxisLabels(QWidget):
 class SurfaceView(gl.GLViewWidget):
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(170, 260)
+        self.setMinimumSize(170, 220)
+        self.opts["fov"] = 20
         self.setBackgroundColor("#f5f7fa")
         self.atom_artist = None
         self.show_atoms = True
@@ -100,7 +88,7 @@ class SurfaceView(gl.GLViewWidget):
         span = np.maximum(high-low, .5)
         self._draw_axes(low, high, span)
         self.opts['center'] = QVector3D(*((low+high)/2))
-        self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05), elevation=25, azimuth=-55)
+        self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05*np.tan(np.deg2rad(30))/np.tan(np.deg2rad(10))), elevation=25, azimuth=-55)
         self.update()
 
     def set_atoms_visible(self, visible):
@@ -112,6 +100,8 @@ class SurfaceView(gl.GLViewWidget):
     def set_atom_labels_visible(self, visible):
         self.show_atom_labels = visible
         self.labels_overlay.update()
+        if hasattr(self, "axes_footer"):
+            self.axes_footer.update()
 
     def set_data(self, result, volume, plane_height, color_scale):
         fitted = self._fitted
@@ -149,23 +139,12 @@ class SurfaceView(gl.GLViewWidget):
         self._draw_axes(low, high, span)
         if not fitted:
             self.opts['center'] = QVector3D(*((low+high)/2))
-            self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05), elevation=25, azimuth=-55)
+            self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05*np.tan(np.deg2rad(30))/np.tan(np.deg2rad(10))), elevation=25, azimuth=-55)
         self._fitted = True
         self.update()
 
     def _draw_axes(self, low, high, span):
-        origin = low-span*.06
-        self.axis_labels = [(origin, f"z {low[2]:.3g} Å")]
-        for axis, label in enumerate(("x / Å", "y / Å", "z / Å")):
-            end = origin.copy()
-            end[axis] = high[axis]+span[axis]*.08
-            self.addItem(gl.GLLinePlotItem(pos=np.array([origin, end], dtype=np.float32),
-                                          color=(.4, .45, .52, 1), width=1, antialias=False))
-            self.axis_labels.append((end, f"{label[0]} {high[axis]:.3g} Å"))
-            for value in [float((low[axis]+high[axis])/2)]:
-                position = origin.copy()
-                position[axis] = value
-                self.axis_labels.append((position, f"{value:.3g}"))
+        self.axis_labels = []
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -175,3 +154,32 @@ class SurfaceView(gl.GLViewWidget):
     def paintGL(self):
         super().paintGL()
         self.labels_overlay.update()
+        if hasattr(self, "axes_footer"):
+            self.axes_footer.update()
+
+
+class DirectionAxes(QWidget):
+    """Dedicated footer outside the scene, so axes cannot cover atoms."""
+    def __init__(self, view):
+        super().__init__()
+        self.view = view
+        self.setFixedHeight(72)
+        self.setStyleSheet("background:#f5f7fa;")
+        view.axes_footer = self
+
+    def paintEvent(self, event):
+        from PyQt6.QtCore import QPointF
+        from PyQt6.QtGui import QPen
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#243244"), 1.8))
+        painter.setFont(QFont("Arial", 9))
+        origin = QPointF(40, 38)
+        rotation = self.view.viewMatrix()
+        for vector, label in zip((QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)), "xyz"):
+            direction = rotation.mapVector(vector)
+            end = origin + QPointF(direction.x()*25, -direction.y()*25)
+            painter.drawLine(origin, end)
+            painter.drawText(end+QPointF(3, -3), label)
+        painter.drawText(82, 40, "Å · 等比例")
+        painter.end()

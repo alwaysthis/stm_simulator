@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar, QSlider)
 from .core import read_parchg, simulate, sample_heights
 from .widgets import ChevronComboBox, NumericBox
-from .view3d import SurfaceView
+from .view3d import SurfaceView, DirectionAxes
 from .colors import ColorScale, PALETTES
 
 STYLE = """
@@ -65,30 +65,29 @@ class ImageView(QWidget):
             painter.setPen(QColor("#808080"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 文件开始模拟")
             return
-        scale = min(max(1, self.width()-140)/self.image.width(),
-                    max(1, self.height()-100)/self.image.height())
+        scale = min(max(1, self.width()-40)/self.image.width(),
+                    max(1, self.height()-125)/self.image.height())
         width, height = max(1, int(self.image.width()*scale)), max(1, int(self.image.height()*scale))
-        x, y = max(10, (self.width()-140-width)//2), max(35, (self.height()-height-20)//2)
+        x, y = max(10, (self.width()-width)//2), max(35, (self.height()-height-20)//2)
         self.rect_image = (x, y, width, height)
         painter.drawPixmap(x, y, width, height, QPixmap.fromImage(self.image))
         painter.setPen(QColor("#627187"))
         painter.drawText(x, y+height+22, "x / y (Å)    洋红 → 无交点")
-        bar_x, bar_width = x+width+18, 16
-        gradient = QLinearGradient(bar_x, y+height, bar_x, y)
+        bar_x, bar_y = 18, self.height()-42
+        bar_width, bar_height = min(150, max(50, self.width()//4)), 10
+        gradient = QLinearGradient(bar_x, bar_y, bar_x+bar_width, bar_y)
         levels = np.linspace(self.color_scale.low, self.color_scale.high, 65)
         for stop, rgba in zip(np.linspace(0, 1, 65), self.color_scale.rgba(levels)):
             gradient.setColorAt(float(stop), QColor.fromRgbF(*rgba))
-        painter.fillRect(bar_x, y, bar_width, height, gradient)
-        painter.setPen(QPen(QColor("#627187"), 1))
-        painter.drawRect(bar_x, y, bar_width, height)
-        ticks = [.5] if self.color_scale.low == self.color_scale.high else np.linspace(0, 1, 5)
-        for fraction in ticks:
-            tick_y = int(y+height*(1-fraction))
-            raw = self.color_scale.low+(self.color_scale.high-self.color_scale.low)*fraction
-            value = self.color_scale.display_value(raw)
-            painter.drawLine(bar_x+bar_width, tick_y, bar_x+bar_width+4, tick_y)
-            painter.drawText(bar_x+bar_width+7, tick_y+4, f"{value:.4g}")
-        painter.drawText(bar_x-2, max(16, y-10), self.color_scale.label)
+        painter.fillRect(bar_x, bar_y, bar_width, bar_height, gradient)
+        painter.setPen(QColor("#526174"))
+        painter.drawRect(bar_x, bar_y, bar_width, bar_height)
+        low = self.color_scale.display_value(self.color_scale.low)
+        high = self.color_scale.display_value(self.color_scale.high)
+        painter.drawText(bar_x, bar_y+27, f"{low:.4g}")
+        text = f"{high:.4g}"
+        painter.drawText(bar_x+bar_width-painter.fontMetrics().horizontalAdvance(text), bar_y+27, text)
+        painter.drawText(bar_x+bar_width+12, bar_y+10, self.color_scale.label)
 
     def mouseMoveEvent(self,event):
         if self.image is None or not hasattr(self,"rect_image"):
@@ -101,7 +100,7 @@ class ImageView(QWidget):
         frac = xy @ np.linalg.inv(self.lattice[:2,:2])
         if np.all((frac>=0)&(frac<1)):
             i,j=(frac*np.array(self.result.shape)).astype(int)
-            self.readout.setText(f"x  {xy[0]:.3f} Å     y  {xy[1]:.3f} Å     值  {self.result[i,j]:.6g} {self.unit}")
+            self.readout.setText(f"x  {xy[0]:.3f} Å     y  {xy[1]:.3f} Å     值  {self.color_scale.display_value(self.result[i,j]):.6g} {self.color_scale.label}")
 
     def set_data(self,result,lattice,unit,color_scale):
         self.result,self.lattice,self.unit=result,lattice,unit
@@ -179,6 +178,7 @@ class App(QMainWindow):
         self.atoms_toggle.toggled.connect(self.surface.set_atoms_visible)
         self.atom_labels_toggle.toggled.connect(self.surface.set_atom_labels_visible)
         surface_layout.addWidget(self.surface, 1)
+        surface_layout.addWidget(DirectionAxes(self.surface))
         surface_hint = QLabel("拖动旋转 · 滚轮缩放")
         surface_hint.setWordWrap(True)
         surface_hint.setObjectName("muted")
@@ -207,7 +207,7 @@ class App(QMainWindow):
         self.signal_limits = (-10., 12.)
         self.signal_slider.setToolTip("拖动调节恒流目标信号，对数刻度")
         form.addRow(self.signal_slider)
-        self.height=self.entry(form,"距外层原子 / Å","4.0");self.height.setSingleStep(.1)
+        self.height=self.entry(form,"距所选表面 / Å","4.0");self.height.setSingleStep(.1)
         self.height.setToolTip("恒高截面到所选表面最外层原子的距离，单位 Å。")
         self.height_slider = QSlider(Qt.Orientation.Horizontal)
         self.height_slider.setRange(0, 1000)
@@ -226,7 +226,7 @@ class App(QMainWindow):
         self.side.currentIndexChanged.connect(self.update_slider_ranges)
         colors = self.card(controls, "颜色标尺")
         self.palette = self.combo(colors, "配色", list(PALETTES))
-        self.color_units = self.combo(colors, "高度标注", ["z / Å", "相对最低高度 / nm"])
+        self.color_units = self.combo(colors, "高度标注", ["距表面 / Å", "距表面 / nm"])
         self.color_range = self.combo(colors, "范围", ["全范围", "固定范围"])
         self.color_min = self.entry(colors, "色标下限", "")
         self.color_max = self.entry(colors, "色标上限", "")
@@ -435,16 +435,24 @@ class App(QMainWindow):
         self.color_units.setEnabled(current)
         finite = self.result[np.isfinite(self.result)]
         low, high = float(finite.min()), float(finite.max())
-        relative = current and self.color_units.currentIndex() == 1
-        factor, offset = (.1, low) if relative else (1., 0.)
-        label = "Δz / nm" if relative else ("z / Å" if current else "density (raw)")
+        factor, offset = 1., 0.
+        label = "density (raw)"
+        if current:
+            atom_z = (self.volume.positions @ self.volume.lattice)[:, 2]
+            top = self.parameters.get("side", "top") == "top"
+            offset = float(atom_z.max() if top else atom_z.min())
+            length = self.volume.lattice[2, 2]
+            branch = (offset-float(np.median(finite)))/length
+            offset -= (np.ceil(branch) if top else np.floor(branch))*length
+            factor = (1. if top else -1.) * (.1 if self.color_units.currentIndex() == 1 else 1.)
+            label = "d / nm" if self.color_units.currentIndex() == 1 else "d / Å"
         if fixed:
             try:
                 bottom = float(self.color_min.text()) if self.color_min.text().strip() else (low-offset)*factor
                 top = float(self.color_max.text()) if self.color_max.text().strip() else (high-offset)*factor
                 if not np.isfinite([bottom, top]).all() or bottom >= top:
                     raise ValueError()
-                low, high = bottom/factor+offset, top/factor+offset
+                low, high = sorted((bottom/factor+offset, top/factor+offset))
             except ValueError:
                 self.status.setText("色标范围无效，已使用全范围，请输入下限小于上限的有效数值")
                 with QSignalBlocker(self.color_range):
@@ -452,6 +460,11 @@ class App(QMainWindow):
                 self.color_min.setEnabled(False)
                 self.color_max.setEnabled(False)
         self.color_scale = ColorScale(low, high, self.palette.currentText(), factor, offset, label)
+        if current:
+            distances = self.color_scale.display_value(finite)
+            self.summary.setText(f"恒流    |    距所选表面 {distances.min():.5g} — {distances.max():.5g} {'nm' if abs(factor)==.1 else 'Å'}")
+        elif self.parameters['mode'] == 'height':
+            self.summary.setText(f"恒高    |    距所选表面 {self.parameters['height']:.5g} Å    |    密度 {finite.min():.5g} — {finite.max():.5g}")
         self.image.set_data(self.result, self.volume.lattice, self.unit, self.color_scale)
         self.surface.set_data(self.result, self.volume, self.plane_height, self.color_scale)
 
