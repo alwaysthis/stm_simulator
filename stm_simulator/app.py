@@ -89,8 +89,8 @@ class ImageView(QWidget):
         painter = QPainter(self)
         if not self.exporting:
             painter.fillRect(self.rect(), QColor("#ffffff"))
-        painter.setPen(QPen(QColor("#526174"), 1))
-        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+            painter.setPen(QPen(QColor("#526174"), 1))
+            painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
         if self.image is None:
             painter.setPen(QColor("#808080"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 文件开始模拟")
