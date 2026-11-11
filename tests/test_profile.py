@@ -117,3 +117,19 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(window.surface.cutoff_items, [])
             np.testing.assert_array_equal(window.surface.atom_artist.colors[:, 3], [1., 1., 1.])
             window.close()
+
+    def test_profile_fits_finite_extrema_with_margin_and_constant_curve(self):
+        from stm_simulator.profile_view import ProfilePlot
+        plot = ProfilePlot()
+        plot.set_samples(np.arange(5.), np.array([np.nan, -12., 80., 3., np.nan]))
+        y = plot.viewRange()[1]
+        self.assertLess(y[0], -12.)
+        self.assertGreater(y[1], 80.)
+        plot.setYRange(0, 1, padding=0)
+        plot.fit_curve()
+        self.assertGreater(plot.viewRange()[1][1], 80.)
+        plot.set_samples(np.arange(3.), np.full(3, 2.5))
+        low, high = plot.viewRange()[1]
+        self.assertLess(low, 2.5)
+        self.assertGreater(high, 2.5)
+        plot.close()

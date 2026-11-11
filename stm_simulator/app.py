@@ -396,7 +396,7 @@ class App(QMainWindow):
         self.image.line_cleared.connect(self.profile_panel.hide)
         self.image_tools = HoverActions(self.image, self.image.reset_view, "stm.png")
         self.surface_tools = HoverActions(self.surface, self.surface.reset_view, "stm_3d.png")
-        self.profile_tools = HoverActions(self.profile_plot, self.profile_plot.autoRange, "profile.png")
+        self.profile_tools = HoverActions(self.profile_plot, self.profile_plot.fit_curve, "profile.png")
         self.surface_tools.add_visibility("原子图例", True, self.surface.set_atom_legend_visible)
         self.atom_labels_toggle = self.surface_tools.add_visibility("原子标签", False, self.surface.set_atom_labels_visible)
         self.signal_layer_toggle = self.surface_tools.add_visibility("信号层", True, self.surface.set_signal_visible)
@@ -778,7 +778,8 @@ class App(QMainWindow):
         if self.profile_panel.isHidden() and not self.image.drawing_line:
             self.profile_panel.show()
             self.vertical_plots.setSizes([450, 180])
-            self.profile_plot.autoRange()
+            self.profile_plot.fit_curve()
+            QTimer.singleShot(0, self.profile_plot.fit_curve)
 
     def export_data(self):
         if self.result is None:return

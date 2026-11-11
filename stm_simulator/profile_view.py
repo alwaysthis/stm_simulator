@@ -15,6 +15,9 @@ class ProfilePlot(pg.PlotWidget):
         self.show_points = True
         self.values = None
         self.selection = None
+        self.plotItem.vb.setMouseEnabled(x=True, y=True)
+        self.plotItem.vb.setMouseMode(pg.ViewBox.PanMode)
+        self.plotItem.vb.setAspectLocked(False)
         self.plotItem.vb.setBorder(pg.mkPen("#526174", width=1))
         self.marker = pg.ScatterPlotItem(size=8, brush="#3979bd", pen="white")
         self.annotation = pg.TextItem(color="#243244", anchor=(0, 1), fill=None)
@@ -35,9 +38,27 @@ class ProfilePlot(pg.PlotWidget):
         super().leaveEvent(event)
 
     def set_samples(self, distance, values):
-        self.distances, self.values = distance, values
+        self.distances, self.values = np.asarray(distance), np.asarray(values)
+        self.fit_curve()
         if self.selection is not None:
             self.select_index(min(self.selection, len(values)-1))
+
+    def fit_curve(self):
+        """Fit finite data explicitly, including extrema, independent of hidden-panel geometry."""
+        if self.values is None:
+            return
+        valid = np.isfinite(self.distances) & np.isfinite(self.values)
+        if not valid.any():
+            return
+        x = self.distances[valid]
+        y = self.values[valid]
+        def padded(values, fraction):
+            low, high = float(values.min()), float(values.max())
+            span = high-low
+            margin = span*fraction if span else max(abs(low)*.01, .01)
+            margin = max(margin, np.finfo(float).eps*max(abs(low), abs(high), 1.)*16)
+            return (low-margin, high+margin)
+        self.plotItem.vb.setRange(xRange=padded(x, .03), yRange=padded(y, .10), padding=0)
 
     def pick_point(self, event):
         if event.button().value != 1 or self.values is None:
