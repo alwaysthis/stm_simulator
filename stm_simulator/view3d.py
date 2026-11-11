@@ -91,7 +91,7 @@ class SurfaceView(gl.GLViewWidget):
         self.show_atoms = True
         self.show_signal = True
         self.show_atom_labels = False
-        self.show_atom_legend = False
+        self.show_atom_legend = True
         self.atom_labels = []
         self.surface_item = None
         self._fitted = False
@@ -216,9 +216,10 @@ class SurfaceView(gl.GLViewWidget):
         self.update_projection_range()
 
     def update_projection_range(self):
-        for item in self.cutoff_items:
-            self.removeItem(item)
-        self.cutoff_items = []
+        if not self.projection_range_enabled:
+            for item in self.cutoff_items:
+                self.removeItem(item)
+            self.cutoff_items = []
         if self.volume is None or self.atom_artist is None:
             return
         colors = self.atom_colors.copy()
@@ -234,15 +235,20 @@ class SurfaceView(gl.GLViewWidget):
             # Horizontal physical plane in the existing 3D view, covering the actual a/b cell.
             vertices = np.array([[0, 0], [1, 0], [1, 1], [0, 1]]) @ self.volume.lattice[:2, :2]
             vertices = np.column_stack((vertices, np.full(4, self.cutoff_z))).astype(np.float32)
-            plane = gl.GLMeshItem(vertexes=vertices, faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32),
-                                  color=(.08, .53, .85, .18), smooth=False, computeNormals=False,
-                                  shader=None, glOptions="translucent")
-            outline = gl.GLLinePlotItem(pos=vertices[[0, 1, 2, 3, 0]], color=(.08, .53, .85, .9),
-                                        width=1.5, antialias=True, mode="line_strip")
-            for item in (plane, outline):
-                item.setDepthValue(10)
-                self.addItem(item)
-            self.cutoff_items = [plane, outline]
+            if self.cutoff_items:
+                plane, outline = self.cutoff_items
+                plane.setMeshData(vertexes=vertices, faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32))
+                outline.setData(pos=vertices[[0, 1, 2, 3, 0]])
+            else:
+                plane = gl.GLMeshItem(vertexes=vertices, faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32),
+                                      color=(.08, .53, .85, .18), smooth=False, computeNormals=False,
+                                      shader=None, glOptions="translucent")
+                outline = gl.GLLinePlotItem(pos=vertices[[0, 1, 2, 3, 0]], color=(.08, .53, .85, .9),
+                                            width=1.5, antialias=True, mode="line_strip")
+                for item in (plane, outline):
+                    item.setDepthValue(10)
+                    self.addItem(item)
+                self.cutoff_items = [plane, outline]
         self.atom_artist.colors = colors
         self.atom_artist._camera = None  # Reapply sorted colors even when the camera has not moved.
         self.atom_artist.update()

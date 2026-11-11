@@ -27,7 +27,7 @@ QLabel {background:transparent;border:none;}
 QLabel#muted {color:#627187;}
 QCheckBox {spacing:7px;}
 QCheckBox::indicator {width:14px;height:14px;border:1px solid #354b65;border-radius:3px;background:white;}
-QCheckBox::indicator:checked {background:#3979bd;border:2px solid #243244;image:url(__CHECK_ICON__);}
+QCheckBox::indicator:checked {background:#3979bd;border:1px solid #243244;image:url(__CHECK_ICON__);}
 QCheckBox::indicator:disabled {border-color:#7f8b99;}
 
 QPushButton {background:#e3e9f1;border:1px solid #c8d2df;border-radius:4px;padding:6px 12px;}
@@ -80,7 +80,7 @@ class ImageView(QWidget):
         self.show_line = True
         self.show_atoms = False
         self.show_atom_labels = False
-        self.show_atom_legend = False
+        self.show_atom_legend = True
         self.atom_scale = 1.
         self.atom_depth = 5.
         self.atom_side = "top"
@@ -397,12 +397,10 @@ class App(QMainWindow):
         self.image_tools = HoverActions(self.image, self.image.reset_view, "stm.png")
         self.surface_tools = HoverActions(self.surface, self.surface.reset_view, "stm_3d.png")
         self.profile_tools = HoverActions(self.profile_plot, self.profile_plot.autoRange, "profile.png")
-        self.atoms_toggle = self.surface_tools.add_visibility("原子", True, self.surface.set_atoms_visible)
-        self.surface_tools.add_visibility("原子图例", False, self.surface.set_atom_legend_visible)
+        self.surface_tools.add_visibility("原子图例", True, self.surface.set_atom_legend_visible)
         self.atom_labels_toggle = self.surface_tools.add_visibility("原子标签", False, self.surface.set_atom_labels_visible)
         self.signal_layer_toggle = self.surface_tools.add_visibility("信号层", True, self.surface.set_signal_visible)
         self.surface_tools.add_visibility("晶胞", True, self.surface.set_cell_visible)
-        self.surface_tools.add_visibility("方向轴", True, self.direction_axes.setVisible)
         self.atom_size_slider = DragSlider(Qt.Orientation.Horizontal)
         self.atom_size_slider.setRange(10, 300)
         self.atom_size_slider.setValue(100)
@@ -428,12 +426,13 @@ class App(QMainWindow):
         depth_row = QHBoxLayout()
         depth_row.addWidget(QLabel("原子范围"))
         self.atom_depth_label = QLabel("5.00 Å")
+        self.atom_depth_label.setFixedWidth(self.atom_depth_label.fontMetrics().horizontalAdvance("9999.99 Å")+6)
         depth_row.addWidget(self.atom_depth_label)
         depth_row.addStretch()
         depth_row.addWidget(self.atom_depth_slider)
         atom_controls_layout.addLayout(depth_row)
         self.projection_atoms_toggle = self.image_tools.add_visibility("原子", False, self.set_projection_atoms_visible, details=atom_controls)
-        self.image_tools.add_visibility("原子图例", False, lambda v: self.image.set_visibility("show_atom_legend", v))
+        self.image_tools.add_visibility("原子图例", True, lambda v: self.image.set_visibility("show_atom_legend", v))
         self.image_tools.add_visibility("原子标签", False, lambda v: self.image.set_visibility("show_atom_labels", v))
         self.image_tools.add_visibility("截面线", True, lambda v: self.image.set_visibility("show_line", v))
         self.image_tools.add_visibility("颜色条", True, lambda v: self.image.set_visibility("show_colorbar", v))

@@ -22,3 +22,5 @@ ImageView.atom_depths/atom_opacities基于原始笛卡尔z与所选侧最外层�
 - SurfaceView持有projection_range_enabled/depth/side，创建实际z的GLMesh截止面和边框；重绘重建后仍应用范围，关闭后移除两项并恢复颜色。GlossyAtoms颜色变化清空相机缓存触发排序更新；shader保留指定低alpha=0.2。ImageView.atom_opacities范围外改为0且跳过绘制；App左图原子菜单开关联动右图范围。
 
 - legend.paint_atom_legend为左右图共用图例绘制，按文件顺序去重元素，窄高区域按列布局。左图原子控件作为details竖排两行缩进。DirectionAxes.transparent_image导出透明GL帧并合成DirectionLabels；SurfaceView.transparent_image按实际页脚位置合并方向轴，输出画布相应增高，关闭方向轴时不合成。
+
+- 2026-11-12 原子shader取消相机距离对alpha的额外衰减，范围内alpha1、范围外保留0.2。截止面滑动时通过setMeshData/setData更新已有对象，关闭范围模式才删除；测试检查对象身份稳定。硬截止选择跨原子层时仍按规则整体显隐。

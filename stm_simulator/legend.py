@@ -13,20 +13,19 @@ def paint_atom_legend(painter, volume, width, height):
     if not unique:
         return
     indices = [elements.index(element) for element in unique]
-    rows = max(1, min(len(indices), (height-40)//20))
+    rows = max(1, min(len(indices), (height-24)//20))
     columns = math.ceil(len(indices)/rows)
     left = max(6, width-12-columns*62)
-    top = max(8, height-12-rows*20-19)
+    top = max(8, height-12-rows*20)
     painter.save()
     painter.setOpacity(1.)
     painter.setRenderHint(painter.RenderHint.Antialiasing)
     painter.setFont(QFont("Microsoft YaHei UI", 8))
     painter.setPen(QColor("#243244"))
-    painter.drawText(left, top+11, "原子图例")
     largest = max(float(radii[i]) for i in indices)
     for k, i in enumerate(indices):
         x = left+(k//rows)*62+8
-        y = top+28+(k%rows)*20
+        y = top+9+(k%rows)*20
         radius = max(3., 7.*float(radii[i])/max(largest, .01))
         color = QColor.fromRgbF(*colors[i])
         gradient = QRadialGradient(QPointF(x-radius*.3, y-radius*.35), radius*1.5)

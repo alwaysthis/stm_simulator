@@ -103,6 +103,12 @@ class ProfileTests(unittest.TestCase):
             np.testing.assert_array_equal(window.surface.projection_alphas, [.2, 1., 1.])
             self.assertAlmostEqual(window.surface.cutoff_z, 9.)
             self.assertEqual(len(window.surface.cutoff_items), 2)
+            plane = window.surface.cutoff_items[0]
+            window.atom_depth_slider.setValue(250)
+            self.assertIs(window.surface.cutoff_items[0], plane)
+            window.atom_depth_slider.setValue(300)
+            self.assertTrue(window.image.show_atom_legend)
+            self.assertTrue(window.surface.show_atom_legend)
             window.calculated((np.full((20, 20), 14.), None), dict(mode="current", side="top", engine="test"))
             self.assertEqual(len(window.surface.cutoff_items), 2)
             window.side.setCurrentIndex(1)

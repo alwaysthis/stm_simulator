@@ -37,7 +37,7 @@ void main() {
     float distanceLight = 1.0 / (1.0 + 0.012*v_distance);
     vec3 lit = v_color.rgb*(0.23+0.72*diffuse)*(0.85+0.15*distanceLight);
     lit += vec3(0.8)*specular;
-    float alpha = v_color.a < 0.3 ? v_color.a : v_color.a*clamp(0.45+0.55*distanceLight, 0.45, 1.0);
+    float alpha = v_color.a;
     fragColor = vec4(clamp(lit, 0.0, 1.0), alpha);
 }
 """

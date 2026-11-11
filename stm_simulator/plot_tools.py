@@ -1,7 +1,7 @@
 """Hover actions shared by image, profile and OpenGL views."""
 from PyQt6.QtCore import QObject, QEvent, QTimer, Qt, QSize, QMimeData, QBuffer, QIODevice
 from PyQt6.QtGui import QCursor, QImage, QPixmap, QPainter, QPen, QColor, QIcon
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QToolButton, QApplication, QFileDialog, QMenu, QWidgetAction, QWidget, QHBoxLayout, QCheckBox
+from PyQt6.QtWidgets import QLayout, QFrame, QVBoxLayout, QToolButton, QApplication, QFileDialog, QMenu, QWidgetAction, QWidget, QHBoxLayout, QCheckBox
 
 
 def action_icon(kind):
@@ -44,7 +44,9 @@ class HoverActions(QObject):
         self.view = view
         self.filename = filename
         self.menu = QMenu(view)
-        self.menu.setStyleSheet("QMenu {background:white;border:1px solid #c8d2df;padding:3px;}")
+        self.menu.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        self.menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.menu.setStyleSheet("QMenu {background:white;border:1px solid #c8d2df;border-radius:9px;padding:7px;}")
         self.menu.aboutToHide.connect(lambda: QTimer.singleShot(60, self.check_hover))
         self.bar = QFrame(view)
         self.bar.setStyleSheet("QFrame {background:#ffffff;border:1px solid #c8d2df;border-radius:5px;} QToolButton {border:none;background:transparent;padding:5px;color:#243244;} QToolButton:hover {background:#d7e4f3;}")
@@ -71,6 +73,7 @@ class HoverActions(QObject):
         outer = QVBoxLayout(row)
         outer.setContentsMargins(5, 2, 5, 2)
         outer.setSpacing(2)
+        outer.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout = QHBoxLayout()
         outer.addLayout(layout)
         check = RowCheckBox(label)
@@ -86,6 +89,10 @@ class HoverActions(QObject):
         return check
 
     def show_menu(self):
+        self.menu.ensurePolished()
+        required_width = max((a.defaultWidget().minimumSizeHint().width() for a in self.menu.actions()), default=160)
+        self.menu.setMinimumWidth(required_width+20)
+        self.menu.adjustSize()
         self.menu.popup(self.bar.mapToGlobal(self.bar.rect().topLeft()))
 
     def eventFilter(self, obj, event):
