@@ -3,8 +3,8 @@ import queue
 import threading
 from pathlib import Path
 import numpy as np
-from PyQt6.QtCore import Qt, QTimer, QSettings, QSignalBlocker
-from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen
+from PyQt6.QtCore import Qt, QTimer, QSettings, QSignalBlocker, QRegularExpression
+from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen, QRegularExpressionValidator
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar, QSlider)
@@ -102,12 +102,13 @@ class ImageView(QWidget):
             self.readout.setText(f"x  {xy[0]:.3f} Å     y  {xy[1]:.3f} Å     值  {self.color_scale.display_value(self.result[i,j]):.6g} {self.color_scale.label}")
 
     def set_data(self,result,lattice,unit,color_scale,repeats=1):
-        self.repeats = repeats
+        self.repeats = np.broadcast_to(np.asarray(repeats, dtype=float), (2,)).copy()
+        repeats = self.repeats
         self.result,self.lattice,self.unit=result,lattice,unit
         self.color_scale = color_scale
         rgb = np.round(color_scale.rgba(result)[..., :3]*255).astype(np.uint8)
         rgb[~np.isfinite(result)] = [110, 30, 70]
-        corners=np.array([[0,0],lattice[0,:2]*repeats,lattice[1,:2]*repeats,(lattice[0,:2]+lattice[1,:2])*repeats])
+        corners=np.array([[0,0],lattice[0,:2]*repeats[0],lattice[1,:2]*repeats[1],lattice[0,:2]*repeats[0]+lattice[1,:2]*repeats[1]])
         self.low,self.high=corners.min(axis=0),corners.max(axis=0)
         shape=np.maximum(1,((self.high-self.low)/max(self.high-self.low)*900).astype(int))
         xx,yy=np.meshgrid(np.linspace(self.low[0],self.high[0],shape[0]),np.linspace(self.high[1],self.low[1],shape[1]))
@@ -159,10 +160,16 @@ class App(QMainWindow):
         map_header.addWidget(QLabel("二维 STM"))
         map_header.addStretch()
         map_header.addWidget(QLabel("面内显示范围"))
-        self.tiles = ChevronComboBox()
-        self.tiles.addItems([f"{n} × {n}" for n in range(1, 6)])
-        self.tiles.currentIndexChanged.connect(self.refresh_colors)
-        map_header.addWidget(self.tiles)
+        self.tiles_a = QLineEdit("1")
+        self.tiles_b = QLineEdit("1")
+        for field, direction in ((self.tiles_a, "a"), (self.tiles_b, "b")):
+            field.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]*"), field))
+            field.setToolTip(f"{direction}方向重复数量，输入正整数后按回车")
+            field.setMaximumWidth(85)
+            field.editingFinished.connect(self.refresh_colors)
+        map_header.addWidget(self.tiles_a)
+        map_header.addWidget(QLabel("×"))
+        map_header.addWidget(self.tiles_b)
         map_layout.addLayout(map_header)
         self.image = ImageView(self.readout)
         self.image.setMinimumWidth(240)
@@ -435,6 +442,9 @@ class App(QMainWindow):
         self.refresh_colors()
 
     def refresh_colors(self):
+        if not self.tiles_a.hasAcceptableInput() or not self.tiles_b.hasAcceptableInput():
+            return
+        repeats = (int(self.tiles_a.text()), int(self.tiles_b.text()))
         fixed = self.color_range.currentIndex() == 1
         self.color_min.setEnabled(fixed)
         self.color_max.setEnabled(fixed)
@@ -474,7 +484,7 @@ class App(QMainWindow):
             self.summary.setText(f"恒流    |    距所选表面 {distances.min():.5g} — {distances.max():.5g} {'nm' if abs(factor)==.1 else 'Å'}")
         elif self.parameters['mode'] == 'height':
             self.summary.setText(f"恒高    |    距所选表面 {self.parameters['height']:.5g} Å    |    密度 {finite.min():.5g} — {finite.max():.5g}")
-        self.image.set_data(self.result, self.volume.lattice, self.unit, self.color_scale, self.tiles.currentIndex()+1)
+        self.image.set_data(self.result, self.volume.lattice, self.unit, self.color_scale, repeats)
         self.surface.set_data(self.result, self.volume, self.plane_height, self.color_scale)
 
     def export_data(self):
