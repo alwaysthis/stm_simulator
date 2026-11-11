@@ -4,8 +4,30 @@ from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QVector3D, QFont, QPainter, QColor, QMatrix4x4
 import pyqtgraph.opengl as gl
+from pyqtgraph.opengl import shaders
 from .elements import atom_styles
 from .atoms import GlossyAtoms
+
+AXIS_COLORS = ("#d84444", "#249650", "#397bd0")
+shaders.ShaderProgram("axis_front_lit", [
+    shaders.VertexShader(shaders.getShaderProgram("shaded").shaders[0].code),
+    shaders.FragmentShader("""
+        #ifdef GL_ES
+        precision mediump float;
+        #endif
+        varying vec4 v_color;
+        varying vec3 v_normal;
+        void main() {
+            vec3 normal = normalize(v_normal);
+            vec3 light = normalize(vec3(-0.3, 0.5, 1.0));
+            float diffuse = max(dot(normal, light), 0.0);
+            vec3 halfway = normalize(light + vec3(0.0, 0.0, 1.0));
+            float highlight = pow(max(dot(normal, halfway), 0.0), 28.0);
+            vec3 rgb = v_color.rgb * (0.65 + 0.35*diffuse) + vec3(0.22)*highlight;
+            gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), v_color.a);
+        }
+    """),
+])
 
 
 class AxisLabels(QWidget):
@@ -189,7 +211,7 @@ class DirectionAxes(gl.GLViewWidget):
     def __init__(self, view):
         super().__init__()
         self.view = view
-        self.setFixedHeight(110)
+        self.setFixedHeight(90)
         self.setBackgroundColor("#f5f7fa")
         self.opts['fov'] = 25
         self.opts['distance'] = 10.
@@ -198,8 +220,8 @@ class DirectionAxes(gl.GLViewWidget):
         for axis in range(3):
             for radius, length, offset in (([.065, .065], .72, 0), ([.15, 0], .32, .72)):
                 mesh = gl.MeshData.cylinder(rows=2, cols=24, radius=radius, length=length)
-                item = gl.GLMeshItem(meshdata=mesh, color=(.2, .27, .36, 1),
-                                     smooth=True, shader="shaded", glOptions="opaque")
+                item = gl.GLMeshItem(meshdata=mesh, color=QColor(AXIS_COLORS[axis]).getRgbF(),
+                                     smooth=True, shader="axis_front_lit", glOptions="opaque")
                 item.translate(0, 0, offset)
                 if axis == 0:
                     item.rotate(90, 0, 1, 0)
@@ -208,7 +230,7 @@ class DirectionAxes(gl.GLViewWidget):
                 self.addItem(item)
                 self.parts.append(item)
         center = gl.GLMeshItem(meshdata=gl.MeshData.sphere(rows=8, cols=16, radius=.095),
-                               color=(.2, .27, .36, 1), smooth=True, shader="shaded")
+                               color=(.6, .65, .7, 1), smooth=True, shader="axis_front_lit")
         self.addItem(center)
         self.labels = DirectionLabels(self)
         view.axes_footer = self
@@ -221,7 +243,7 @@ class DirectionAxes(gl.GLViewWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.opts['distance'] = 2.1/(2*np.tan(np.deg2rad(12.5)))*max(1., self.width()/max(1, self.height()))
+        self.opts['distance'] = 2.6/(2*np.tan(np.deg2rad(12.5)))*max(1., self.width()/max(1, self.height()))
         if hasattr(self, "labels"):
             self.labels.setGeometry(self.rect())
 
@@ -259,6 +281,7 @@ class DirectionLabels(QWidget):
         for position, label in ((QVector3D(1.16, 0, 0), "x"),
                                 (QVector3D(0, 1.16, 0), "y"),
                                 (QVector3D(0, 0, 1.16), "z")):
+            painter.setPen(QColor(AXIS_COLORS["xyz".index(label)]))
             point = transform.map(position)
             painter.drawText(int(point.x()), int(point.y()), label)
         painter.end()
