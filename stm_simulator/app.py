@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, QSettings, QSignalBlocker, QRegularExpression, pyqtSignal, QPointF
-from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen, QRegularExpressionValidator
+from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen, QRegularExpressionValidator, QRadialGradient, QPolygonF
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar, QSlider)
@@ -80,6 +80,8 @@ class ImageView(QWidget):
         self.show_atoms = False
         self.show_atom_labels = False
         self.atom_scale = 1.
+        self.atom_depth = 5.
+        self.atom_side = "top"
         self.volume = None
         self.setMinimumSize(220, 160)
 
@@ -87,6 +89,8 @@ class ImageView(QWidget):
         painter = QPainter(self)
         if not self.exporting:
             painter.fillRect(self.rect(), QColor("#ffffff"))
+        painter.setPen(QPen(QColor("#526174"), 1))
+        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
         if self.image is None:
             painter.setPen(QColor("#808080"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 文件开始模拟")
@@ -115,6 +119,8 @@ class ImageView(QWidget):
             painter.drawText(bar_x+bar_width+7, bar_y+4, f"{high:.4g}")
             painter.drawText(bar_x+bar_width+7, bar_y+bar_height//2+4, self.color_scale.label)
         self.paint_atoms(painter)
+        if self.show_atoms:
+            self.paint_depth_plane(painter)
         if self.show_line and self.line_points is not None:
             points = []
             for position in self.line_points:
@@ -152,29 +158,87 @@ class ImageView(QWidget):
         self.atom_scale = value/100
         self.update()
 
+    def set_atom_depth(self, value):
+        self.atom_depth = value/100
+        self.update()
+
+    def atom_depths(self):
+        z = (self.volume.positions @ self.volume.lattice)[:, 2]
+        surface = float(z.max() if self.atom_side == "top" else z.min())
+        return (surface-z if self.atom_side == "top" else z-surface), surface
+
+    def atom_opacities(self):
+        depths, _ = self.atom_depths()
+        return np.where(depths <= self.atom_depth+1e-8, 1., .2)
+
     def paint_atoms(self, painter):
         if not self.show_atoms or self.volume is None:
             return
         x, y, width, height = self.rect_image
         elements, colors, radii = atom_styles(self.volume)
-        # Iterate only translations intersecting the displayed area. The painter clips at its bounds.
+        depths, _ = self.atom_depths()
+        opacities = self.atom_opacities()
+        # Paint deep atoms first; near-surface atoms must remain above them in projection.
+        order = np.argsort(-depths, kind="stable")
         painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setClipRect(x, y, width, height)
         sx, sy = np.array([width, height])/(self.high-self.low)
         stride = max(1, int(np.ceil(np.sqrt(len(elements)*float(np.prod(self.repeats))/50000))))
         for a in range(0, int(self.repeats[0]), stride):
             for b in range(0, int(self.repeats[1]), stride):
-                for i, atom in enumerate(self.volume.positions):
+                for i in order:
+                    atom = self.volume.positions[i]
                     xy = ((atom[:2] % 1)+[a, b]) @ self.lattice[:2, :2]
                     px = x+(xy[0]-self.low[0])*sx
                     py = y+height-(xy[1]-self.low[1])*sy
                     radius = max(1., float(radii[i])*min(sx, sy)*self.atom_scale*.35)
-                    painter.setBrush(QColor.fromRgbF(*colors[i]))
-                    painter.setPen(QPen(QColor("#354b65"), .7))
+                    base = QColor.fromRgbF(*colors[i])
+                    gradient = QRadialGradient(QPointF(px-radius*.3, py-radius*.35), radius*1.5)
+                    gradient.setColorAt(0., QColor.fromRgbF(*(.9+.1*colors[i, :3])))
+                    gradient.setColorAt(.10, base.lighter(180))
+                    gradient.setColorAt(.25, base.lighter(125))
+                    gradient.setColorAt(.55, base)
+                    gradient.setColorAt(1., base.darker(240))
+                    painter.setOpacity(float(opacities[i]))
+                    painter.setBrush(gradient)
+                    painter.setPen(QPen(base.darker(180), .7))
                     painter.drawEllipse(QPointF(px, py), radius, radius)
                     if self.show_atom_labels:
                         painter.setPen(QColor("#243244"))
                         painter.drawText(QPointF(px+radius+3, py-3), elements[i])
+        painter.restore()
+
+    def paint_depth_plane(self, painter):
+        if self.volume is None:
+            return
+        depths, surface = self.atom_depths()
+        span = max(float(depths.max()), self.atom_depth, .01)
+        cutoff = surface-self.atom_depth if self.atom_side == "top" else surface+self.atom_depth
+        # Side-view inset: a horizontal cutoff cannot be distinguished in the main top projection.
+        left, top = max(5, self.width()-142), self.height()-76
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(QFont("Microsoft YaHei UI", 8))
+        painter.setPen(QColor("#354b65"))
+        painter.drawText(left, top+12, f"原子范围 {self.atom_depth:.2f} Å")
+        def plane(y):
+            return QPolygonF([QPointF(left+6, y+7), QPointF(left+39, y+7),
+                              QPointF(left+52, y), QPointF(left+19, y)])
+        upper, lower = top+23, top+47
+        fraction = min(1., self.atom_depth/span)
+        middle = upper+fraction*(lower-upper) if self.atom_side == "top" else lower-fraction*(lower-upper)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor("#a3aebc"), .8))
+        painter.drawPolygon(plane(upper))
+        painter.drawPolygon(plane(lower))
+        painter.drawLine(QPointF(left+6, upper+7), QPointF(left+6, lower+7))
+        painter.drawLine(QPointF(left+52, upper), QPointF(left+52, lower))
+        painter.setPen(QPen(QColor("#1686d9"), 1.2))
+        painter.setBrush(QColor(22, 134, 217, 70))
+        painter.drawPolygon(plane(middle))
+        painter.drawText(left+60, top+36, "截止面")
+        painter.drawText(left+60, top+52, f"z={cutoff:.2f} Å")
         painter.restore()
 
     def transparent_image(self):
@@ -372,7 +436,22 @@ class App(QMainWindow):
         self.atom_size_slider.setFixedWidth(110)
         self.atom_size_slider.setToolTip("投影原子大小：0.1–3倍")
         self.atom_size_slider.valueChanged.connect(self.image.set_atom_scale)
-        self.image_tools.add_visibility("原子", False, lambda v: self.image.set_visibility("show_atoms", v), self.atom_size_slider)
+        self.atom_depth_slider = DragSlider(Qt.Orientation.Horizontal)
+        self.atom_depth_slider.setRange(0, 500)
+        self.atom_depth_slider.setValue(500)
+        self.atom_depth_slider.setFixedWidth(110)
+        self.atom_depth_slider.setEnabled(False)
+        self.atom_depth_slider.setToolTip("从所选表面向内部的深度；范围外原子透明度为0.2")
+        self.atom_depth_slider.valueChanged.connect(self.change_atom_depth)
+        depth_controls = QWidget()
+        depth_layout = QHBoxLayout(depth_controls)
+        depth_layout.setContentsMargins(24, 0, 0, 2)
+        depth_layout.addWidget(QLabel("原子范围"))
+        self.atom_depth_label = QLabel("5.00 Å")
+        depth_layout.addWidget(self.atom_depth_label)
+        depth_layout.addStretch()
+        depth_layout.addWidget(self.atom_depth_slider)
+        self.image_tools.add_visibility("原子", False, lambda v: self.image.set_visibility("show_atoms", v), self.atom_size_slider, details=depth_controls)
         self.image_tools.add_visibility("原子标签", False, lambda v: self.image.set_visibility("show_atom_labels", v))
         self.image_tools.add_visibility("截面线", True, lambda v: self.image.set_visibility("show_line", v))
         self.image_tools.add_visibility("颜色条", True, lambda v: self.image.set_visibility("show_colorbar", v))
@@ -415,6 +494,7 @@ class App(QMainWindow):
         self.zmin=self.entry(bounds,"z 下界 / Å","");self.zmax=self.entry(bounds,"z 上界 / Å","")
         self.engine.currentIndexChanged.connect(self.sync_controls);self.mode.currentIndexChanged.connect(self.sync_controls)
         self.side.currentIndexChanged.connect(self.update_slider_ranges)
+        self.side.currentIndexChanged.connect(self.update_atom_side)
         colors = self.card(controls, "颜色标尺")
         self.palette = self.combo(colors, "配色", list(PALETTES))
         self.color_units = self.combo(colors, "高度标注", ["距表面 / Å", "距表面 / nm"])
@@ -549,6 +629,13 @@ class App(QMainWindow):
             del self.height_map
         self.image.clear_line()
         self.volume=volume;self.image.volume=volume;self.result=None;self.image.image=None;self.image.update()
+        z = (volume.positions @ volume.lattice)[:, 2]
+        maximum = max(1, int(np.ceil(float(np.ptp(z))*100)))
+        self.atom_depth_slider.setEnabled(True)
+        self.atom_depth_slider.setMaximum(maximum)
+        self.atom_depth_slider.setValue(min(500, maximum))
+        self.change_atom_depth(self.atom_depth_slider.value())
+        self.update_atom_side()
         self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
         self.update_slider_ranges()
         self.surface.show_structure(volume)
@@ -665,6 +752,14 @@ class App(QMainWindow):
         self.surface.set_data(self.result, self.volume, self.plane_height, self.color_scale)
         if self.image.line_points is not None:
             self.update_profile(*self.image.line_points)
+
+    def change_atom_depth(self, value):
+        self.image.set_atom_depth(value)
+        self.atom_depth_label.setText(f"{value/100:.2f} Å")
+
+    def update_atom_side(self):
+        self.image.atom_side = "top" if self.side.currentIndex() == 0 else "bottom"
+        self.image.update()
 
     def set_line_mode(self, enabled):
         self.image.line_enabled = enabled

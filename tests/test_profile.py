@@ -72,3 +72,19 @@ class ProfileTests(unittest.TestCase):
         image = plot.transparent_image()
         self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
         plot.close()
+
+    def test_projected_atom_depth_uses_selected_surface_and_keeps_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            window = App(Path(directory)/"settings.ini")
+            volume = Volume(np.diag([10., 10., 30.]),
+                            np.array([[.2, .2, .2], [.4, .4, .3], [.6, .6, .4]]),
+                            np.zeros((20, 20, 2)), "test", ("Cr", "Sb", "Cr"))
+            window.loaded(volume)
+            window.atom_depth_slider.setValue(300)
+            np.testing.assert_allclose(window.image.atom_depths()[0], [6., 3., 0.])
+            np.testing.assert_array_equal(window.image.atom_opacities(), [.2, 1., 1.])
+            window.side.setCurrentIndex(1)
+            np.testing.assert_array_equal(window.image.atom_opacities(), [1., 1., .2])
+            window.atom_depth_slider.setValue(window.atom_depth_slider.maximum())
+            np.testing.assert_array_equal(window.image.atom_opacities(), [1., 1., 1.])
+            window.close()

@@ -64,18 +64,23 @@ class HoverActions(QObject):
         self.bar.hide()
         view.installEventFilter(self)
 
-    def add_visibility(self, label, checked, callback, control=None):
+    def add_visibility(self, label, checked, callback, control=None, details=None):
         action = QWidgetAction(self.menu)
         row = QWidget(self.menu)
         row.setStyleSheet("QWidget {background:white;} QCheckBox {padding:5px;} QCheckBox:hover {background:#edf3fa;}")
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(5, 2, 5, 2)
+        outer = QVBoxLayout(row)
+        outer.setContentsMargins(5, 2, 5, 2)
+        outer.setSpacing(2)
+        layout = QHBoxLayout()
+        outer.addLayout(layout)
         check = RowCheckBox(label)
         check.setChecked(checked)
         check.toggled.connect(callback)
         layout.addWidget(check, 1)
         if control is not None:
             layout.addWidget(control)
+        if details is not None:
+            outer.addWidget(details)
         action.setDefaultWidget(row)
         self.menu.addAction(action)
         return check
