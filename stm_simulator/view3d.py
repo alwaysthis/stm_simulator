@@ -111,7 +111,7 @@ class SurfaceView(gl.GLViewWidget):
         self.show_atom_labels = visible
         self.labels_overlay.update()
         if hasattr(self, "axes_footer"):
-            self.axes_footer.update()
+            self.axes_footer.sync_camera()
 
     def set_data(self, result, volume, plane_height, color_scale):
         fitted = self._fitted
@@ -181,46 +181,84 @@ class SurfaceView(gl.GLViewWidget):
         super().paintGL()
         self.labels_overlay.update()
         if hasattr(self, "axes_footer"):
-            self.axes_footer.update()
+            self.axes_footer.sync_camera()
 
 
-class DirectionAxes(QWidget):
-    """Dedicated footer outside the scene, so axes cannot cover atoms."""
+class DirectionAxes(gl.GLViewWidget):
+    """Lit cylinder-and-cone axes in their own three-dimensional viewport."""
     def __init__(self, view):
         super().__init__()
         self.view = view
-        self.setFixedHeight(72)
-        self.setStyleSheet("background:#f5f7fa;")
+        self.setFixedHeight(110)
+        self.setBackgroundColor("#f5f7fa")
+        self.opts['fov'] = 25
+        self.opts['distance'] = 10.
+        self.opts['center'] = QVector3D(.3, .3, .3)
+        self.parts = []
+        for axis in range(3):
+            for radius, length, offset in (([.065, .065], .72, 0), ([.15, 0], .32, .72)):
+                mesh = gl.MeshData.cylinder(rows=2, cols=24, radius=radius, length=length)
+                item = gl.GLMeshItem(meshdata=mesh, color=(.2, .27, .36, 1),
+                                     smooth=True, shader="shaded", glOptions="opaque")
+                item.translate(0, 0, offset)
+                if axis == 0:
+                    item.rotate(90, 0, 1, 0)
+                elif axis == 1:
+                    item.rotate(-90, 1, 0, 0)
+                self.addItem(item)
+                self.parts.append(item)
+        center = gl.GLMeshItem(meshdata=gl.MeshData.sphere(rows=8, cols=16, radius=.095),
+                               color=(.2, .27, .36, 1), smooth=True, shader="shaded")
+        self.addItem(center)
+        self.labels = DirectionLabels(self)
         view.axes_footer = self
+        self.sync_camera()
+
+    def sync_camera(self):
+        self.opts['elevation'] = self.view.opts['elevation']
+        self.opts['azimuth'] = self.view.opts['azimuth']
+        self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.opts['distance'] = 2.1/(2*np.tan(np.deg2rad(12.5)))*max(1., self.width()/max(1, self.height()))
+        if hasattr(self, "labels"):
+            self.labels.setGeometry(self.rect())
+
+    def paintGL(self):
+        super().paintGL()
+        self.labels.update()
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+    def mousePressEvent(self, event):
+        event.ignore()
+
+    def mouseMoveEvent(self, event):
+        event.ignore()
+
+
+class DirectionLabels(QWidget):
+    def __init__(self, view):
+        super().__init__(view)
+        self.view = view
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background:transparent;")
+        self.setGeometry(view.rect())
 
     def paintEvent(self, event):
-        from PyQt6.QtCore import QPointF
-        from PyQt6.QtGui import QPen, QPolygonF, QLinearGradient
+        viewport = self.view.getViewport()
+        screen = QMatrix4x4()
+        screen.viewport(0, self.height(), self.width(), -self.height())
+        transform = screen*self.view.projectionMatrix(viewport, viewport)*self.view.viewMatrix()
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor("#243244"), 1.8))
+        painter.setPen(QColor("#243244"))
         painter.setFont(QFont("Arial", 9))
-        origin = QPointF(40, 38)
-        rotation = self.view.viewMatrix()
-        for vector, label in zip((QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)), "xyz"):
-            direction = rotation.mapVector(vector)
-            end = origin + QPointF(direction.x()*25, -direction.y()*25)
-            delta = end-origin
-            length = max(np.hypot(delta.x(), delta.y()), 1.)
-            normal = QPointF(-delta.y()/length, delta.x()/length)
-            stem = end-delta*.3
-            gradient = QLinearGradient(origin-normal*3, origin+normal*3)
-            gradient.setColorAt(0, QColor("#172638"))
-            gradient.setColorAt(.5, QColor("#8294a8"))
-            gradient.setColorAt(1, QColor("#243244"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(gradient)
-            painter.drawPolygon(QPolygonF([origin-normal*3, stem-normal*3, stem+normal*3, origin+normal*3]))
-            painter.setBrush(QColor("#263a50"))
-            painter.drawPolygon(QPolygonF([stem-normal*7, end, stem]))
-            painter.setBrush(QColor("#75899e"))
-            painter.drawPolygon(QPolygonF([stem, end, stem+normal*7]))
-            painter.setPen(QPen(QColor("#243244"), 1.2))
-            painter.drawText(end+QPointF(3, -3), label)
-        painter.drawText(82, 40, "Å · 等比例")
+        for position, label in ((QVector3D(1.16, 0, 0), "x"),
+                                (QVector3D(0, 1.16, 0), "y"),
+                                (QVector3D(0, 0, 1.16), "z")):
+            point = transform.map(position)
+            painter.drawText(int(point.x()), int(point.y()), label)
         painter.end()
