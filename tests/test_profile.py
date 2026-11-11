@@ -61,8 +61,8 @@ class ProfileTests(unittest.TestCase):
             def button(self): return Qt.MouseButton.LeftButton
             def scenePos(self): return position
         plot.pick_point(Click())
-        self.assertEqual(plot.selection, 1)
-        self.assertIn("3", plot.annotation.toPlainText())
+        self.assertIn(1, plot.annotations)
+        self.assertIn("3", plot.annotations[1].toPlainText())
         texts = []
         plot.position_changed.connect(texts.append)
         plot.track_mouse(position)
@@ -132,4 +132,43 @@ class ProfileTests(unittest.TestCase):
         low, high = plot.viewRange()[1]
         self.assertLess(low, 2.5)
         self.assertGreater(high, 2.5)
+        plot.close()
+
+    def test_multiple_points_toggle_and_coordinate_corner_tethers(self):
+        from stm_simulator.profile_view import ProfilePlot
+        from PyQt6.QtCore import QPointF, Qt
+        plot = ProfilePlot()
+        plot.resize(650, 250)
+        plot.show()
+        x = np.arange(11.)
+        y = np.sin(x)
+        plot.plot(x, y)
+        plot.set_samples(x, y)
+        self.app.processEvents()
+        def click(index):
+            position = plot.plotItem.vb.mapViewToScene(QPointF(float(x[index]), float(y[index])))
+            class Click:
+                def button(self): return Qt.MouseButton.LeftButton
+                def scenePos(self): return position
+            plot.pick_point(Click())
+        click(2)
+        click(8)
+        self.assertEqual(set(plot.annotations), {2, 8})
+        click(2)
+        self.assertEqual(set(plot.annotations), {8})
+        box = plot.annotations[8]
+        box.move_offset(QPointF(-90, 25))
+        before = np.array(plot.viewRange())
+        box.move_offset(QPointF(-60, 35))
+        np.testing.assert_allclose(plot.viewRange(), before)
+        plot.setXRange(-1., 12., padding=0)
+        end = plot.plotItem.vb.mapSceneToView(box.corner_scene)
+        np.testing.assert_allclose(box.connector.xData, [x[8], end.x()])
+        np.testing.assert_allclose(box.connector.yData, [y[8], end.y()])
+        plot.set_points_visible(False)
+        self.assertFalse(box.isVisible())
+        self.assertFalse(box.connector.isVisible())
+        plot.set_points_visible(True)
+        plot.set_samples(np.arange(2.), np.ones(2))
+        self.assertFalse(plot.annotations)
         plot.close()

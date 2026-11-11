@@ -394,6 +394,7 @@ class App(QMainWindow):
         view_layout.addWidget(self.vertical_plots, 1)
         self.image.line_changed.connect(self.update_profile)
         self.image.line_cleared.connect(self.profile_panel.hide)
+        self.image.line_cleared.connect(self.profile_plot.clear_selection)
         self.image_tools = HoverActions(self.image, self.image.reset_view, "stm.png")
         self.surface_tools = HoverActions(self.surface, self.surface.reset_view, "stm_3d.png")
         self.profile_tools = HoverActions(self.profile_plot, self.profile_plot.fit_curve, "profile.png")

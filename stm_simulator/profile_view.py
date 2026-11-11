@@ -2,8 +2,77 @@
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.exporters import ImageExporter
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, QPointF, Qt
 from PyQt6.QtGui import QColor
+
+
+class CoordinateBox(pg.TextItem):
+    """Screen-sized draggable label whose nearest corner stays tethered to its sample."""
+    def __init__(self, plot, index):
+        super().__init__(color="#243244", anchor=(0, 0),
+                         border=pg.mkPen("#627187", width=1), fill=(255, 255, 255, 240))
+        self.plot = plot
+        self.index = index
+        self.offset = None
+        self.setZValue(25)
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.textItem.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.connector = pg.PlotCurveItem(pen=pg.mkPen("#627187", width=1))
+        self.connector.setZValue(24)
+        plot.addItem(self.connector, ignoreBounds=True)
+        plot.addItem(self, ignoreBounds=True)
+
+    def hoverEvent(self, event):
+        if not event.isExit():
+            event.acceptDrags(Qt.MouseButton.LeftButton)
+            event.acceptClicks(Qt.MouseButton.LeftButton)
+
+    def mouseClickEvent(self, event):
+        event.accept()
+
+    def mouseDragEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        event.accept()
+        if event.isStart():
+            self.drag_origin = QPointF(self.offset)
+            self.drag_start = event.buttonDownScenePos()
+        self.move_offset(self.drag_origin+event.scenePos()-self.drag_start)
+
+    def move_offset(self, offset):
+        self.offset = QPointF(offset)
+        self.refresh()
+
+    def refresh(self):
+        x, y = float(self.plot.distances[self.index]), float(self.plot.values[self.index])
+        self.setText(f"({x:.5g}, {y:.6g})")
+        view = self.plot.plotItem.vb
+        point = view.mapViewToScene(QPointF(x, y))
+        size = self.boundingRect().size()
+        if self.offset is None:
+            bounds = view.sceneBoundingRect()
+            self.offset = QPointF(16 if point.x() < bounds.center().x() else -size.width()-16,
+                                  -size.height()-14 if point.y() > bounds.center().y() else 14)
+        target = point+self.offset
+        # Keep the whole label inside the plotting area when panning or resizing.
+        bounds = view.sceneBoundingRect().adjusted(3, 3, -3, -3)
+        target.setX(max(bounds.left(), min(target.x(), bounds.right()-size.width())))
+        target.setY(max(bounds.top(), min(target.y(), bounds.bottom()-size.height())))
+        self.setPos(view.mapSceneToView(target))
+        rectangle = self.sceneBoundingRect()
+        corners = (rectangle.topLeft(), rectangle.topRight(), rectangle.bottomLeft(), rectangle.bottomRight())
+        corner = min(corners, key=lambda p: (p.x()-point.x())**2+(p.y()-point.y())**2)
+        self.corner_scene = corner
+        end = view.mapSceneToView(corner)
+        self.connector.setData([x, end.x()], [y, end.y()])
+        visible = self.plot.show_points
+        self.setVisible(visible)
+        self.connector.setVisible(visible)
+
+    def remove(self):
+        self.plot.removeItem(self.connector)
+        self.plot.removeItem(self)
 
 
 class ProfilePlot(pg.PlotWidget):
@@ -14,15 +83,15 @@ class ProfilePlot(pg.PlotWidget):
         self.show_coordinates = True
         self.show_points = True
         self.values = None
-        self.selection = None
+        self.annotations = {}
         self.plotItem.vb.setMouseEnabled(x=True, y=True)
         self.plotItem.vb.setMouseMode(pg.ViewBox.PanMode)
         self.plotItem.vb.setAspectLocked(False)
         self.plotItem.vb.setBorder(pg.mkPen("#526174", width=1))
         self.marker = pg.ScatterPlotItem(size=8, brush="#3979bd", pen="white")
-        self.annotation = pg.TextItem(color="#243244", anchor=(0, 1), fill=None)
         self.addItem(self.marker, ignoreBounds=True)
-        self.addItem(self.annotation, ignoreBounds=True)
+        self.marker.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.plotItem.vb.sigRangeChanged.connect(self.refresh_annotations)
         self.scene().sigMouseMoved.connect(self.track_mouse)
         self.scene().sigMouseClicked.connect(self.pick_point)
 
@@ -39,9 +108,12 @@ class ProfilePlot(pg.PlotWidget):
 
     def set_samples(self, distance, values):
         self.distances, self.values = np.asarray(distance), np.asarray(values)
+        for index in list(self.annotations):
+            if index >= len(values) or not np.isfinite(self.values[index]):
+                self.deselect_index(index)
         self.fit_curve()
-        if self.selection is not None:
-            self.select_index(min(self.selection, len(values)-1))
+        self.refresh_annotations()
+        self.update_markers()
 
     def fit_curve(self):
         """Fit finite data explicitly, including extrema, independent of hidden-panel geometry."""
@@ -61,16 +133,23 @@ class ProfilePlot(pg.PlotWidget):
         self.plotItem.vb.setRange(xRange=padded(x, .03), yRange=padded(y, .10), padding=0)
 
     def pick_point(self, event):
-        if event.button().value != 1 or self.values is None:
+        if event.button().value != 1 or self.values is None or not self.show_points:
             return
         position = event.scenePos()
         if not self.plotItem.vb.sceneBoundingRect().contains(position):
+            return
+        view = self.plotItem.vb
+        for index in list(self.annotations):
+            selected = view.mapViewToScene(QPointF(float(self.distances[index]), float(self.values[index])))
+            if (selected.x()-position.x())**2+(selected.y()-position.y())**2 <= 100:
+                self.deselect_index(index)
+                return
+        if any(box.sceneBoundingRect().contains(position) for box in self.annotations.values() if box.isVisible()):
             return
         finite = np.flatnonzero(np.isfinite(self.values))
         if not finite.size:
             return
         # Measure proximity in screen coordinates, so vertical/horizontal units do not bias picking.
-        from PyQt6.QtCore import QPointF
         points = [self.plotItem.vb.mapViewToScene(QPointF(float(self.distances[i]), float(self.values[i]))) for i in finite]
         squared = [(p.x()-position.x())**2+(p.y()-position.y())**2 for p in points]
         nearest = int(np.argmin(squared))
@@ -78,20 +157,34 @@ class ProfilePlot(pg.PlotWidget):
             self.select_index(int(finite[nearest]))
 
     def select_index(self, index):
-        self.selection = index
-        x, y = self.distances[index], self.values[index]
-        valid = np.isfinite(y) and self.show_points
-        self.marker.setData([x] if valid else [], [y] if valid else [])
-        self.annotation.setText(f"({x:.5g}, {y:.6g})")
-        bounds = self.viewRange()
-        self.annotation.setAnchor((1 if x > sum(bounds[0])/2 else 0, 0 if y > sum(bounds[1])/2 else 1))
-        self.annotation.setPos(x, y if np.isfinite(y) else 0)
-        self.annotation.setVisible(valid)
+        if not np.isfinite(self.values[index]):
+            return
+        if index not in self.annotations:
+            self.annotations[index] = CoordinateBox(self, index)
+        self.annotations[index].refresh()
+        self.update_markers()
+
+    def deselect_index(self, index):
+        box = self.annotations.pop(index)
+        box.remove()
+        self.update_markers()
+
+    def clear_selection(self):
+        for index in list(self.annotations):
+            self.deselect_index(index)
+
+    def update_markers(self):
+        indices = [i for i in self.annotations if i < len(self.values) and np.isfinite(self.values[i])] if self.show_points else []
+        self.marker.setData(self.distances[indices] if indices else [], self.values[indices] if indices else [])
+
+    def refresh_annotations(self, *args):
+        for box in self.annotations.values():
+            box.refresh()
 
     def set_points_visible(self, visible):
         self.show_points = visible
-        self.marker.setVisible(visible)
-        self.annotation.setVisible(visible and self.selection is not None)
+        self.update_markers()
+        self.refresh_annotations()
 
     def set_coordinates_visible(self, visible):
         self.show_coordinates = visible

@@ -26,3 +26,5 @@ ImageView.atom_depths/atom_opacities基于原始笛卡尔z与所选侧最外层�
 - 2026-11-12 原子shader取消相机距离对alpha的额外衰减，范围内alpha1、范围外保留0.2。截止面滑动时通过setMeshData/setData更新已有对象，关闭范围模式才删除；测试检查对象身份稳定。硬截止选择跨原子层时仍按规则整体显隐。
 
 - 2026-11-12 ProfilePlot.fit_curve独立计算有限点范围并padding，绕过隐藏面板自动范围的不稳定几何；set_samples和首次展开后的QTimer调用。显式开启ViewBox.PanMode、xy鼠标交互且解除等比例锁定；保留AxisItem原生分轴滚轮路由。
+
+- 2026-11-12 ProfilePlot.annotations以采样索引保存CoordinateBox TextItem，独立connector PlotCurveItem。自定义mouseDragEvent存储屏幕offset，sigRangeChanged刷新坐标框和最近框角连线；所有注释ignoreBounds不影响曲线适配。拾取先命中已有点以取消，再选择最近曲线采样点。数据更新移除越界或NaN索引。
