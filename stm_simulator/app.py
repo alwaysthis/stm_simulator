@@ -72,10 +72,10 @@ class ImageView(QWidget):
         self.rect_image = (x, y, width, height)
         painter.drawPixmap(x, y, width, height, QPixmap.fromImage(self.image))
         painter.setPen(QColor("#627187"))
-        painter.drawText(x, y+height+22, "x / y (Å)    洋红 → 无交点")
-        bar_x, bar_y = 18, self.height()-42
-        bar_width, bar_height = min(150, max(50, self.width()//4)), 10
-        gradient = QLinearGradient(bar_x, bar_y, bar_x+bar_width, bar_y)
+        painter.drawText(max(x, 160), y+height+22, "x / y (Å)    洋红 → 无交点")
+        bar_x, bar_y = 18, self.height()-66
+        bar_width, bar_height = 10, 50
+        gradient = QLinearGradient(bar_x, bar_y+bar_height, bar_x, bar_y)
         levels = np.linspace(self.color_scale.low, self.color_scale.high, 65)
         for stop, rgba in zip(np.linspace(0, 1, 65), self.color_scale.rgba(levels)):
             gradient.setColorAt(float(stop), QColor.fromRgbF(*rgba))
@@ -84,10 +84,9 @@ class ImageView(QWidget):
         painter.drawRect(bar_x, bar_y, bar_width, bar_height)
         low = self.color_scale.display_value(self.color_scale.low)
         high = self.color_scale.display_value(self.color_scale.high)
-        painter.drawText(bar_x, bar_y+27, f"{low:.4g}")
-        text = f"{high:.4g}"
-        painter.drawText(bar_x+bar_width-painter.fontMetrics().horizontalAdvance(text), bar_y+27, text)
-        painter.drawText(bar_x+bar_width+12, bar_y+10, self.color_scale.label)
+        painter.drawText(bar_x+bar_width+7, bar_y+bar_height+4, f"{low:.4g}")
+        painter.drawText(bar_x+bar_width+7, bar_y+4, f"{high:.4g}")
+        painter.drawText(bar_x+bar_width+7, bar_y+bar_height//2+4, self.color_scale.label)
 
     def mouseMoveEvent(self,event):
         if self.image is None or not hasattr(self,"rect_image"):
