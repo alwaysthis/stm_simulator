@@ -72,7 +72,7 @@ class ImageView(QWidget):
         self.rect_image = (x, y, width, height)
         painter.drawPixmap(x, y, width, height, QPixmap.fromImage(self.image))
         painter.setPen(QColor("#627187"))
-        painter.drawText(max(x, 160), y+height+22, "x / y (Å)    洋红 → 无交点")
+        painter.drawText(max(x, 160), y+height+22, "x / y (Å)")
         bar_x, bar_y = 18, self.height()-66
         bar_width, bar_height = 10, 50
         gradient = QLinearGradient(bar_x, bar_y+bar_height, bar_x, bar_y)
