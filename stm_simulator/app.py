@@ -3,7 +3,7 @@ import queue
 import threading
 from pathlib import Path
 import numpy as np
-from PyQt6.QtCore import Qt, QTimer, QSettings, QSignalBlocker, QRegularExpression
+from PyQt6.QtCore import Qt, QTimer, QSettings, QSignalBlocker, QRegularExpression, pyqtSignal, QPointF
 from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen, QRegularExpressionValidator
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
@@ -12,6 +12,9 @@ from .core import read_parchg, simulate, sample_heights
 from .widgets import ChevronComboBox, NumericBox, DragSlider
 from .view3d import SurfaceView, DirectionAxes
 from .colors import ColorScale, PALETTES
+from .plot_tools import HoverActions
+import pyqtgraph as pg
+from scipy.ndimage import map_coordinates
 
 STYLE = """
 QMainWindow, QWidget {background:#f1f4f8;color:#243244;font-family:'Microsoft YaHei UI';font-size:13px;}
@@ -22,6 +25,7 @@ QLabel#muted {color:#627187;}
 QPushButton {background:#e3e9f1;border:1px solid #c8d2df;border-radius:4px;padding:6px 12px;}
 QPushButton:hover {background:#d7e4f3;border-color:#4a90d9;}
 QPushButton:pressed {background:#c3d5eb;}
+QPushButton:checked {background:#c3d5eb;border-color:#3979bd;color:#1e568e;}
 QPushButton:disabled {color:#9aa6b5;}
 QPushButton#primary {color:white;background:#3979bd;border-color:#4a90d9;}
 QPushButton#primary:hover {background:#4a90d9;}
@@ -51,8 +55,13 @@ QSplitter::handle {background:#f1f4f8;width:8px;}
 """
 
 class ImageView(QWidget):
+    line_changed = pyqtSignal(object, object)
+    line_cleared = pyqtSignal()
     def __init__(self, readout):
         super().__init__()
+        self.line_enabled = False
+        self.line_points = None
+        self.drawing_line = False
         self.setMouseTracking(True)
         self.readout = readout
         self.pixels = self.image = self.result = None
@@ -87,8 +96,68 @@ class ImageView(QWidget):
         painter.drawText(bar_x+bar_width+7, bar_y+bar_height+4, f"{low:.4g}")
         painter.drawText(bar_x+bar_width+7, bar_y+4, f"{high:.4g}")
         painter.drawText(bar_x+bar_width+7, bar_y+bar_height//2+4, self.color_scale.label)
+        if self.line_points is not None:
+            points = []
+            for position in self.line_points:
+                fraction = (position-self.low)/(self.high-self.low)
+                points.append(QPointF(x+fraction[0]*width, y+(1-fraction[1])*height))
+            painter.setPen(QPen(QColor("#1686d9"), 2))
+            painter.drawLine(*points)
+            painter.setBrush(QColor("#ffffff"))
+            for point in points:
+                painter.drawEllipse(point, 4, 4)
+
+
+    def xy_at(self, position):
+        if self.image is None or not hasattr(self, "rect_image"):
+            return None
+        x, y, width, height = self.rect_image
+        u = np.clip((position.x()-x)/width, 0, 1)
+        v = np.clip(1-(position.y()-y)/height, 0, 1)
+        return self.low+np.array([u, v])*(self.high-self.low)
+
+    def reset_view(self):
+        self.line_points = None
+        self.drawing_line = False
+        self.line_cleared.emit()
+        self.update()
+
+    def mousePressEvent(self, event):
+        if self.line_enabled and event.button() == Qt.MouseButton.LeftButton:
+            if self.image is None or not hasattr(self, "rect_image"):
+                return super().mousePressEvent(event)
+            x, y, width, height = self.rect_image
+            if not (x <= event.position().x() <= x+width and y <= event.position().y() <= y+height):
+                return super().mousePressEvent(event)
+            point = self.xy_at(event.position())
+            if point is not None:
+                frac = point @ np.linalg.inv(self.lattice[:2, :2])
+                if np.all((frac >= 0) & (frac <= self.repeats)):
+                    self.line_points = (point, point.copy())
+                    self.drawing_line = True
+                    self.update()
+                    return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.drawing_line and event.button() == Qt.MouseButton.LeftButton:
+            self.drawing_line = False
+            endpoint = self.xy_at(event.position())
+            if endpoint is not None:
+                self.line_points = (self.line_points[0], endpoint)
+                self.line_changed.emit(*self.line_points)
+                self.update()
+            return
+        super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self,event):
+        if self.drawing_line:
+            endpoint = self.xy_at(event.position())
+            if endpoint is not None:
+                self.line_points = (self.line_points[0], endpoint)
+                self.line_changed.emit(*self.line_points)
+                self.update()
+
         if self.image is None or not hasattr(self,"rect_image"):
             return
         ox,oy,w,h = self.rect_image
@@ -144,6 +213,10 @@ class App(QMainWindow):
         title=QLabel("STM Simulator");title.setFont(QFont("Microsoft YaHei UI",11,QFont.Weight.Bold));toolbar.addWidget(title);toolbar.addSpacing(20)
         for text,callback in [("打开文件",self.open_file),("导入高度",self.open_heights),("导出图像",self.export_image),("导出数据",self.export_data),("帮助",self.show_help)]:
             button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
+        self.line_button = QPushButton("截面线")
+        self.line_button.setCheckable(True)
+        self.line_button.toggled.connect(self.set_line_mode)
+        toolbar.addWidget(self.line_button)
         toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#39835d");toolbar.addWidget(state)
         layout.addLayout(toolbar)
         body=QHBoxLayout();body.setSpacing(8);layout.addLayout(body,1)
@@ -200,7 +273,36 @@ class App(QMainWindow):
         plots.setStretchFactor(0, 3)
         plots.setStretchFactor(1, 1)
         plots.setSizes([675, 225])
-        view_layout.addWidget(plots, 1)
+        self.profile_panel = QWidget()
+        profile_layout = QVBoxLayout(self.profile_panel)
+        profile_layout.setContentsMargins(0, 0, 0, 0)
+        profile_header = QHBoxLayout()
+        profile_header.addWidget(QLabel("截面图"))
+        profile_header.addStretch()
+        close_profile = QPushButton("关闭")
+        close_profile.clicked.connect(self.image.reset_view)
+        profile_header.addWidget(close_profile)
+        profile_layout.addLayout(profile_header)
+        self.profile_plot = pg.PlotWidget(background="white")
+        self.profile_plot.setMinimumHeight(120)
+        self.profile_plot.setMenuEnabled(False)
+        self.profile_plot.hideButtons()
+        self.profile_plot.setLabel("bottom", "沿线距离", units="Å")
+        for axis in ("left", "bottom"):
+            self.profile_plot.getAxis(axis).setPen("#627187")
+            self.profile_plot.getAxis(axis).setTextPen("#243244")
+        self.profile_curve = self.profile_plot.plot(pen=pg.mkPen("#3979bd", width=2), connect="finite")
+        profile_layout.addWidget(self.profile_plot)
+        self.profile_panel.hide()
+        self.vertical_plots = QSplitter(Qt.Orientation.Vertical)
+        self.vertical_plots.addWidget(plots)
+        self.vertical_plots.addWidget(self.profile_panel)
+        view_layout.addWidget(self.vertical_plots, 1)
+        self.image.line_changed.connect(self.update_profile)
+        self.image.line_cleared.connect(self.profile_panel.hide)
+        self.image_tools = HoverActions(self.image, self.image.reset_view, "stm.png")
+        self.surface_tools = HoverActions(self.surface, self.surface.reset_view, "stm_3d.png")
+        self.profile_tools = HoverActions(self.profile_plot, self.profile_plot.autoRange, "profile.png")
         split.addWidget(view)
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setMinimumWidth(290);scroll.setMaximumWidth(360)
         panel=QFrame();panel.setObjectName("panel");scroll.setWidget(panel);split.addWidget(scroll);split.setSizes([900,300])
@@ -255,7 +357,7 @@ class App(QMainWindow):
         QTimer.singleShot(0, self.restore_file)
 
     def show_help(self):
-        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。\n\n拖动滑条或修改目标信号、高度后自动更新双图，也可点击运行模拟。\n恒流调整目标信号，恒高调整距外层原子的距离。\n三维图可勾选显示原子、元素标签或信号层。\n原子颜色和显示半径参考 crystalX 的 VESTA 主题。\n选择指定(hkl)表面前，需先构建该晶面的slab并计算PARCHG。\n曲面和原子共用笛卡尔 Å 坐标，保持xyz等比例。\n颜色标尺支持全范围或固定范围，可选择相对最低高度nm。\n恒流目标信号滑条采用对数刻度，便于跨数量级调节。")
+        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。\n\n拖动滑条或修改目标信号、高度后自动更新双图，也可点击运行模拟。\n恒流调整目标信号，恒高调整距外层原子的距离。\n三维图可勾选显示原子、元素标签或信号层。\n原子颜色和显示半径参考 crystalX 的 VESTA 主题。\n选择指定(hkl)表面前，需先构建该晶面的slab并计算PARCHG。\n曲面和原子共用笛卡尔 Å 坐标，保持xyz等比例。\n颜色标尺支持全范围或固定范围，可选择相对最低高度nm。\n恒流目标信号滑条采用对数刻度，便于跨数量级调节。\n\n顶部“截面线”开启后，在左图按住鼠标左键拉线，下方显示沿线截面。\n三个图的右上角悬浮工具栏提供重置、复制和导出图像。")
 
     def card(self,parent,title):
         frame=QFrame();frame.setObjectName("card");box=QVBoxLayout(frame);box.setContentsMargins(10,10,10,10)
@@ -369,6 +471,7 @@ class App(QMainWindow):
             self.settings.sync()
         if hasattr(self, "height_map"):
             del self.height_map
+        self.image.reset_view()
         self.volume=volume;self.result=None;self.image.image=None;self.image.update()
         self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
         self.update_slider_ranges()
@@ -433,7 +536,7 @@ class App(QMainWindow):
         self.result,self.plane_height=output;self.parameters=parameters
         finite=self.result[np.isfinite(self.result)]
         if not finite.size:
-            self.result=None;self.image.image=None;self.image.update();self.surface.show_structure(self.volume);self.status.setText("没有有效交点：起始密度必须低于阈值，请检查数据、阈值和搜索范围");return
+            self.result=None;self.image.reset_view();self.image.image=None;self.image.update();self.surface.show_structure(self.volume);self.status.setText("没有有效交点：起始密度必须低于阈值，请检查数据、阈值和搜索范围");return
         self.unit="Å" if parameters["mode"]=="current" else "raw density"
         self.summary.setText(f"{'恒流' if parameters['mode'] == 'current' else ('高度文件' if parameters['mode'] == 'height_map' else '恒高')}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
         self.status.setText(f"完成    ·    起伏 {np.ptp(finite):.5g} {self.unit}    ·    无交点 {100*np.isnan(self.result).mean():.1f}%")
@@ -484,6 +587,36 @@ class App(QMainWindow):
             self.summary.setText(f"恒高    |    距所选表面 {self.parameters['height']:.5g} Å    |    密度 {finite.min():.5g} — {finite.max():.5g}")
         self.image.set_data(self.result, self.volume.lattice, self.unit, self.color_scale, repeats)
         self.surface.set_data(self.result, self.volume, self.plane_height, self.color_scale)
+        if self.image.line_points is not None:
+            self.update_profile(*self.image.line_points)
+
+    def set_line_mode(self, enabled):
+        self.image.line_enabled = enabled
+        if not enabled:
+            self.image.drawing_line = False
+        self.image.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
+
+    def update_profile(self, start, end):
+        if self.result is None or np.linalg.norm(end-start) < 1e-9:
+            return
+        inverse = np.linalg.inv(self.volume.lattice[:2, :2])
+        start_frac, end_frac = start @ inverse, end @ inverse
+        count = max(2, min(4096, int(np.linalg.norm((end_frac-start_frac)*self.result.shape)*2)+1))
+        positions = np.linspace(start, end, count)
+        fractional = positions @ inverse
+        valid = np.all((fractional >= 0) & (fractional <= self.image.repeats), axis=1)
+        coordinates = (fractional % 1)*np.array(self.result.shape)
+        values = map_coordinates(self.result, coordinates.T, order=1, mode="grid-wrap", prefilter=False)
+        values[~valid] = np.nan
+        distance = np.linspace(0, np.linalg.norm(end-start), count)
+        self.profile_distance = distance
+        self.profile_values = self.color_scale.display_value(values)
+        self.profile_curve.setData(distance, self.profile_values)
+        self.profile_plot.setLabel("left", self.color_scale.label)
+        if self.profile_panel.isHidden() and not self.image.drawing_line:
+            self.profile_panel.show()
+            self.vertical_plots.setSizes([450, 180])
+            self.profile_plot.autoRange()
 
     def export_data(self):
         if self.result is None:return
@@ -498,7 +631,7 @@ class App(QMainWindow):
     def export_image(self):
         if self.image.image is None:return
         path,_=QFileDialog.getSaveFileName(self,"导出图像","stm.png","PNG (*.png)")
-        if path:self.image.grab().save(path);self.status.setText("已导出 PNG")
+        if path:self.image_tools.capture().save(path);self.status.setText("已导出 PNG")
 
 def main():
     import sys

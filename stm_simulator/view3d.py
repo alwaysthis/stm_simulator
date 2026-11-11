@@ -84,6 +84,7 @@ class SurfaceView(gl.GLViewWidget):
         self.atom_labels = []
         self.surface_item = None
         self._fitted = False
+        self.home_camera = None
         self.axis_labels = []
         self.labels_overlay = AxisLabels(self)
         self.labels_overlay.setGeometry(self.rect())
@@ -95,6 +96,7 @@ class SurfaceView(gl.GLViewWidget):
         self.atom_artist = None
         self.surface_item = None
         self._fitted = False
+        self.home_camera = None
         self.axis_labels = []
         self.atom_labels = []
         self.update()
@@ -115,6 +117,12 @@ class SurfaceView(gl.GLViewWidget):
         self._draw_axes(low, high, span)
         self.opts['center'] = QVector3D(*((low+high)/2))
         self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05*np.tan(np.deg2rad(30))/np.tan(np.deg2rad(10))), elevation=25, azimuth=-55)
+        self.home_camera = self.cameraParams().copy()
+        self.update()
+
+    def reset_view(self):
+        if self.home_camera is not None:
+            self.setCameraParams(**self.home_camera)
         self.update()
 
     def set_signal_visible(self, visible):
@@ -175,6 +183,7 @@ class SurfaceView(gl.GLViewWidget):
         if not fitted:
             self.opts['center'] = QVector3D(*((low+high)/2))
             self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05*np.tan(np.deg2rad(30))/np.tan(np.deg2rad(10))), elevation=25, azimuth=-55)
+            self.home_camera = self.cameraParams().copy()
         self._fitted = True
         self.update()
 
