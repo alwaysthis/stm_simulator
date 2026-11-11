@@ -57,6 +57,7 @@ class SurfaceView(gl.GLViewWidget):
         self.setBackgroundColor("#f5f7fa")
         self.atom_artist = None
         self.show_atoms = True
+        self.show_signal = True
         self.show_atom_labels = False
         self.atom_labels = []
         self.surface_item = None
@@ -84,11 +85,20 @@ class SurfaceView(gl.GLViewWidget):
         self.atom_artist = GlossyAtoms(self.atom_positions, self.atom_colors, self.atom_radii)
         self.atom_artist.setVisible(self.show_atoms)
         self.addItem(self.atom_artist)
-        low, high = self.atom_positions.min(axis=0), self.atom_positions.max(axis=0)
+        cell = np.array([[i, j, k] for i in (0, 1) for j in (0, 1) for k in (0, 1)]) @ volume.lattice
+        bounds = np.concatenate((self.atom_positions, cell))
+        low, high = bounds.min(axis=0), bounds.max(axis=0)
         span = np.maximum(high-low, .5)
+        self._draw_cell(volume.lattice)
         self._draw_axes(low, high, span)
         self.opts['center'] = QVector3D(*((low+high)/2))
         self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05*np.tan(np.deg2rad(30))/np.tan(np.deg2rad(10))), elevation=25, azimuth=-55)
+        self.update()
+
+    def set_signal_visible(self, visible):
+        self.show_signal = visible
+        if self.surface_item is not None:
+            self.surface_item.setVisible(visible)
         self.update()
 
     def set_atoms_visible(self, visible):
@@ -124,6 +134,7 @@ class SurfaceView(gl.GLViewWidget):
         self.surface_item = gl.GLMeshItem(vertexes=vertices, faces=faces.astype(np.uint32),
                                           vertexColors=colors, smooth=False, computeNormals=False,
                                           shader=None, glOptions="opaque")
+        self.surface_item.setVisible(self.show_signal)
         self.addItem(self.surface_item)
         # Both objects use physical Cartesian coordinates, with one shared view
         # transform and no independent z stretch or implicit periodic translation.
@@ -133,15 +144,30 @@ class SurfaceView(gl.GLViewWidget):
         self.atom_artist = GlossyAtoms(self.atom_positions, self.atom_colors, self.atom_radii)
         self.atom_artist.setVisible(self.show_atoms)
         self.addItem(self.atom_artist)
-        points = np.concatenate((self.surface_vertices[valid], self.atom_positions))
+        cell = np.array([[i, j, k] for i in (0, 1) for j in (0, 1) for k in (0, 1)]) @ volume.lattice
+        points = np.concatenate((self.surface_vertices[valid], self.atom_positions, cell))
         low, high = points.min(axis=0), points.max(axis=0)
         span = np.maximum(high-low, .5)
+        self._draw_cell(volume.lattice)
         self._draw_axes(low, high, span)
         if not fitted:
             self.opts['center'] = QVector3D(*((low+high)/2))
             self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05*np.tan(np.deg2rad(30))/np.tan(np.deg2rad(10))), elevation=25, azimuth=-55)
         self._fitted = True
         self.update()
+
+    def _draw_cell(self, lattice):
+        vertices = np.array([[i, j, k] for i in (0, 1) for j in (0, 1) for k in (0, 1)])
+        segments = []
+        for index, vertex in enumerate(vertices):
+            for axis in range(3):
+                if vertex[axis] == 0:
+                    neighbor = vertex.copy()
+                    neighbor[axis] = 1
+                    segments.extend((vertex @ lattice, neighbor @ lattice))
+        self.cell_edges = np.asarray(segments, dtype=np.float32)
+        self.addItem(gl.GLLinePlotItem(pos=self.cell_edges, mode="lines",
+                                      color=(.18, .23, .3, 1), width=1, antialias=True))
 
     def _draw_axes(self, low, high, span):
         self.axis_labels = []
@@ -169,7 +195,7 @@ class DirectionAxes(QWidget):
 
     def paintEvent(self, event):
         from PyQt6.QtCore import QPointF
-        from PyQt6.QtGui import QPen
+        from PyQt6.QtGui import QPen, QPolygonF, QLinearGradient
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(QColor("#243244"), 1.8))
@@ -179,7 +205,22 @@ class DirectionAxes(QWidget):
         for vector, label in zip((QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)), "xyz"):
             direction = rotation.mapVector(vector)
             end = origin + QPointF(direction.x()*25, -direction.y()*25)
-            painter.drawLine(origin, end)
+            delta = end-origin
+            length = max(np.hypot(delta.x(), delta.y()), 1.)
+            normal = QPointF(-delta.y()/length, delta.x()/length)
+            stem = end-delta*.3
+            gradient = QLinearGradient(origin-normal*3, origin+normal*3)
+            gradient.setColorAt(0, QColor("#172638"))
+            gradient.setColorAt(.5, QColor("#8294a8"))
+            gradient.setColorAt(1, QColor("#243244"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(gradient)
+            painter.drawPolygon(QPolygonF([origin-normal*3, stem-normal*3, stem+normal*3, origin+normal*3]))
+            painter.setBrush(QColor("#263a50"))
+            painter.drawPolygon(QPolygonF([stem-normal*7, end, stem]))
+            painter.setBrush(QColor("#75899e"))
+            painter.drawPolygon(QPolygonF([stem, end, stem+normal*7]))
+            painter.setPen(QPen(QColor("#243244"), 1.2))
             painter.drawText(end+QPointF(3, -3), label)
         painter.drawText(82, 40, "Å · 等比例")
         painter.end()

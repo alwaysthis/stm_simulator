@@ -1,7 +1,7 @@
 """Studio-inspired controls. Geometry follows the reference studio branch."""
 from PyQt6.QtCore import QLocale
 from PyQt6.QtGui import QColor, QPainter, QPen
-from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox
+from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QSlider
 
 class ChevronComboBox(QComboBox):
     def wheelEvent(self, event):
@@ -29,5 +29,10 @@ class NumericBox(QDoubleSpinBox):
     def textFromValue(self, value):
         return f"{value:.10f}".rstrip("0").rstrip(".") or "0"
 
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class DragSlider(QSlider):
     def wheelEvent(self, event):
         event.ignore()

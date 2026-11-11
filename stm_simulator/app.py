@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar, QSlider)
 from .core import read_parchg, simulate, sample_heights
-from .widgets import ChevronComboBox, NumericBox
+from .widgets import ChevronComboBox, NumericBox, DragSlider
 from .view3d import SurfaceView, DirectionAxes
 from .colors import ColorScale, PALETTES
 
@@ -97,22 +97,23 @@ class ImageView(QWidget):
             return
         xy = self.low+np.array([(px-ox)/w,1-(py-oy)/h])*(self.high-self.low)
         frac = xy @ np.linalg.inv(self.lattice[:2,:2])
-        if np.all((frac>=0)&(frac<1)):
-            i,j=(frac*np.array(self.result.shape)).astype(int)
+        if np.all((frac>=0)&(frac<self.repeats)):
+            i,j=((frac % 1)*np.array(self.result.shape)).astype(int)
             self.readout.setText(f"x  {xy[0]:.3f} Å     y  {xy[1]:.3f} Å     值  {self.color_scale.display_value(self.result[i,j]):.6g} {self.color_scale.label}")
 
-    def set_data(self,result,lattice,unit,color_scale):
+    def set_data(self,result,lattice,unit,color_scale,repeats=1):
+        self.repeats = repeats
         self.result,self.lattice,self.unit=result,lattice,unit
         self.color_scale = color_scale
         rgb = np.round(color_scale.rgba(result)[..., :3]*255).astype(np.uint8)
         rgb[~np.isfinite(result)] = [110, 30, 70]
-        corners=np.array([[0,0],lattice[0,:2],lattice[1,:2],lattice[0,:2]+lattice[1,:2]])
+        corners=np.array([[0,0],lattice[0,:2]*repeats,lattice[1,:2]*repeats,(lattice[0,:2]+lattice[1,:2])*repeats])
         self.low,self.high=corners.min(axis=0),corners.max(axis=0)
         shape=np.maximum(1,((self.high-self.low)/max(self.high-self.low)*900).astype(int))
         xx,yy=np.meshgrid(np.linspace(self.low[0],self.high[0],shape[0]),np.linspace(self.high[1],self.low[1],shape[1]))
         fractional=np.stack([xx,yy],axis=-1) @ np.linalg.inv(lattice[:2,:2])
-        mask=np.all((fractional>=0)&(fractional<=1),axis=-1)
-        ij=np.clip((fractional*np.array(result.shape)).astype(int),0,np.array(result.shape)-1)
+        mask=np.all((fractional>=0)&(fractional<=repeats),axis=-1)
+        ij=np.clip(((fractional % 1)*np.array(result.shape)).astype(int),0,np.array(result.shape)-1)
         self.pixels=np.ascontiguousarray(rgb[ij[:,:,0],ij[:,:,1]])
         self.pixels[~mask]=[255,255,255]
         self.image=QImage(self.pixels.data,shape[0],shape[1],shape[0]*3,QImage.Format.Format_RGB888).copy()
@@ -154,7 +155,15 @@ class App(QMainWindow):
         map_panel = QWidget()
         map_layout = QVBoxLayout(map_panel)
         map_layout.setContentsMargins(0, 0, 0, 0)
-        map_layout.addWidget(QLabel("二维 STM"))
+        map_header = QHBoxLayout()
+        map_header.addWidget(QLabel("二维 STM"))
+        map_header.addStretch()
+        map_header.addWidget(QLabel("面内显示范围"))
+        self.tiles = ChevronComboBox()
+        self.tiles.addItems([f"{n} × {n}" for n in range(1, 6)])
+        self.tiles.currentIndexChanged.connect(self.refresh_colors)
+        map_header.addWidget(self.tiles)
+        map_layout.addLayout(map_header)
         self.image = ImageView(self.readout)
         self.image.setMinimumWidth(240)
         map_layout.addWidget(self.image, 1)
@@ -171,17 +180,17 @@ class App(QMainWindow):
         self.atom_labels_toggle = QCheckBox("原子种类标签")
         self.atom_labels_toggle.setToolTip("在原子位置旁显示元素符号")
         surface_header.addWidget(self.atom_labels_toggle)
+        self.signal_layer_toggle = QCheckBox("显示信号层")
+        self.signal_layer_toggle.setChecked(True)
+        surface_header.addWidget(self.signal_layer_toggle)
         surface_layout.addLayout(surface_header)
         self.surface = SurfaceView()
         self.surface.setMinimumWidth(170)
         self.atoms_toggle.toggled.connect(self.surface.set_atoms_visible)
+        self.signal_layer_toggle.toggled.connect(self.surface.set_signal_visible)
         self.atom_labels_toggle.toggled.connect(self.surface.set_atom_labels_visible)
         surface_layout.addWidget(self.surface, 1)
         surface_layout.addWidget(DirectionAxes(self.surface))
-        surface_hint = QLabel("拖动旋转 · 滚轮缩放")
-        surface_hint.setWordWrap(True)
-        surface_hint.setObjectName("muted")
-        surface_layout.addWidget(surface_hint)
         plots.addWidget(surface_panel)
         plots.setStretchFactor(0, 3)
         plots.setStretchFactor(1, 1)
@@ -201,14 +210,14 @@ class App(QMainWindow):
         self.side.setToolTip("上表面从真空沿 −c 搜索，下表面沿 +c 搜索。指定(hkl)晶面需先构建并计算该晶面的slab。")
         self.threshold=self.entry(form,"目标信号 / 原始密度","0.001");self.threshold.setRange(1e-10,1e12);self.threshold.setSingleStep(.0001)
         self.threshold.setToolTip("恒流目标信号。固定偏压下，阈值越大通常越靠近表面。使用 PARCHG 原始单位。")
-        self.signal_slider = QSlider(Qt.Orientation.Horizontal)
+        self.signal_slider = DragSlider(Qt.Orientation.Horizontal)
         self.signal_slider.setRange(0, 1000)
         self.signal_limits = (-10., 12.)
         self.signal_slider.setToolTip("拖动调节恒流目标信号，对数刻度")
         form.addRow(self.signal_slider)
         self.height=self.entry(form,"距所选表面 / Å","4.0");self.height.setSingleStep(.1)
         self.height.setToolTip("恒高截面到所选表面最外层原子的距离，单位 Å。")
-        self.height_slider = QSlider(Qt.Orientation.Horizontal)
+        self.height_slider = DragSlider(Qt.Orientation.Horizontal)
         self.height_slider.setRange(0, 1000)
         self.height_limit = 20.
         self.height_slider.setToolTip("拖动调节恒高截面距外层原子的距离")
@@ -241,7 +250,7 @@ class App(QMainWindow):
         QTimer.singleShot(0, self.restore_file)
 
     def show_help(self):
-        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。\n\n拖动滑条或修改目标信号、高度后自动更新双图，也可点击运行模拟。\n恒流调整目标信号，恒高调整距外层原子的距离。\n三维图拖动旋转、滚轮缩放，勾选显示原子或元素标签。\n原子颜色和显示半径参考 crystalX 的 VESTA 主题。\n选择指定(hkl)表面前，需先构建该晶面的slab并计算PARCHG。\n曲面和原子共用笛卡尔 Å 坐标，保持xyz等比例。\n颜色标尺支持全范围或固定范围，可选择相对最低高度nm。\n恒流目标信号滑条采用对数刻度，便于跨数量级调节。")
+        QMessageBox.information(self, "方法说明", "Tersoff–Hamann 近似\n\np4vasp 线性模式\n从平面平均密度最小层开始，周期搜索首个达到阈值的点，再线性插值。\n上表面沿 −c 搜索，下表面沿 +c 搜索。输出保留展开的周期坐标。\n无交点以 NaN 标记。\n\n限定真空模式\n仅搜索最外层原子之外的真空，可指定 z 范围。\n\n偏压能窗由 VASP 的 EINT 设置。阈值为 PARCHG 原始数值。\n\n拖动滑条或修改目标信号、高度后自动更新双图，也可点击运行模拟。\n恒流调整目标信号，恒高调整距外层原子的距离。\n三维图可勾选显示原子、元素标签或信号层。\n原子颜色和显示半径参考 crystalX 的 VESTA 主题。\n选择指定(hkl)表面前，需先构建该晶面的slab并计算PARCHG。\n曲面和原子共用笛卡尔 Å 坐标，保持xyz等比例。\n颜色标尺支持全范围或固定范围，可选择相对最低高度nm。\n恒流目标信号滑条采用对数刻度，便于跨数量级调节。")
 
     def card(self,parent,title):
         frame=QFrame();frame.setObjectName("card");box=QVBoxLayout(frame);box.setContentsMargins(10,10,10,10)
@@ -259,6 +268,7 @@ class App(QMainWindow):
         combo=ChevronComboBox();combo.addItems(values);form.addRow(label,combo);return combo
 
     def sync_controls(self):
+        self.side.setEnabled(self.mode.currentIndex() in (0, 1))
         current=self.mode.currentIndex()==0
         self.signal_slider.setEnabled(current)
         self.height_slider.setEnabled(self.mode.currentIndex()==1)
@@ -464,7 +474,7 @@ class App(QMainWindow):
             self.summary.setText(f"恒流    |    距所选表面 {distances.min():.5g} — {distances.max():.5g} {'nm' if abs(factor)==.1 else 'Å'}")
         elif self.parameters['mode'] == 'height':
             self.summary.setText(f"恒高    |    距所选表面 {self.parameters['height']:.5g} Å    |    密度 {finite.min():.5g} — {finite.max():.5g}")
-        self.image.set_data(self.result, self.volume.lattice, self.unit, self.color_scale)
+        self.image.set_data(self.result, self.volume.lattice, self.unit, self.color_scale, self.tiles.currentIndex()+1)
         self.surface.set_data(self.result, self.volume, self.plane_height, self.color_scale)
 
     def export_data(self):
