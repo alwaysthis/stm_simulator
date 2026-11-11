@@ -15,6 +15,7 @@ from .colors import ColorScale, PALETTES
 from .plot_tools import HoverActions
 from .profile_view import ProfilePlot
 from .elements import atom_styles
+from .legend import paint_atom_legend
 import pyqtgraph as pg
 from scipy.ndimage import map_coordinates
 
@@ -79,6 +80,7 @@ class ImageView(QWidget):
         self.show_line = True
         self.show_atoms = False
         self.show_atom_labels = False
+        self.show_atom_legend = False
         self.atom_scale = 1.
         self.atom_depth = 5.
         self.atom_side = "top"
@@ -119,6 +121,8 @@ class ImageView(QWidget):
             painter.drawText(bar_x+bar_width+7, bar_y+4, f"{high:.4g}")
             painter.drawText(bar_x+bar_width+7, bar_y+bar_height//2+4, self.color_scale.label)
         self.paint_atoms(painter)
+        if self.show_atom_legend:
+            paint_atom_legend(painter, self.volume, self.width(), self.height())
         if self.show_line and self.line_points is not None:
             points = []
             for position in self.line_points:
@@ -394,6 +398,7 @@ class App(QMainWindow):
         self.surface_tools = HoverActions(self.surface, self.surface.reset_view, "stm_3d.png")
         self.profile_tools = HoverActions(self.profile_plot, self.profile_plot.autoRange, "profile.png")
         self.atoms_toggle = self.surface_tools.add_visibility("原子", True, self.surface.set_atoms_visible)
+        self.surface_tools.add_visibility("原子图例", False, self.surface.set_atom_legend_visible)
         self.atom_labels_toggle = self.surface_tools.add_visibility("原子标签", False, self.surface.set_atom_labels_visible)
         self.signal_layer_toggle = self.surface_tools.add_visibility("信号层", True, self.surface.set_signal_visible)
         self.surface_tools.add_visibility("晶胞", True, self.surface.set_cell_visible)
@@ -411,15 +416,24 @@ class App(QMainWindow):
         self.atom_depth_slider.setEnabled(False)
         self.atom_depth_slider.setToolTip("从所选表面向内部的深度；左图隐藏范围外原子，右图以0.2透明度显示")
         self.atom_depth_slider.valueChanged.connect(self.change_atom_depth)
-        depth_controls = QWidget()
-        depth_layout = QHBoxLayout(depth_controls)
-        depth_layout.setContentsMargins(24, 0, 0, 2)
-        depth_layout.addWidget(QLabel("原子范围"))
+        atom_controls = QWidget()
+        atom_controls_layout = QVBoxLayout(atom_controls)
+        atom_controls_layout.setContentsMargins(24, 0, 0, 2)
+        atom_controls_layout.setSpacing(5)
+        radius_row = QHBoxLayout()
+        radius_row.addWidget(QLabel("原子半径"))
+        radius_row.addStretch()
+        radius_row.addWidget(self.atom_size_slider)
+        atom_controls_layout.addLayout(radius_row)
+        depth_row = QHBoxLayout()
+        depth_row.addWidget(QLabel("原子范围"))
         self.atom_depth_label = QLabel("5.00 Å")
-        depth_layout.addWidget(self.atom_depth_label)
-        depth_layout.addStretch()
-        depth_layout.addWidget(self.atom_depth_slider)
-        self.projection_atoms_toggle = self.image_tools.add_visibility("原子", False, self.set_projection_atoms_visible, self.atom_size_slider, details=depth_controls)
+        depth_row.addWidget(self.atom_depth_label)
+        depth_row.addStretch()
+        depth_row.addWidget(self.atom_depth_slider)
+        atom_controls_layout.addLayout(depth_row)
+        self.projection_atoms_toggle = self.image_tools.add_visibility("原子", False, self.set_projection_atoms_visible, details=atom_controls)
+        self.image_tools.add_visibility("原子图例", False, lambda v: self.image.set_visibility("show_atom_legend", v))
         self.image_tools.add_visibility("原子标签", False, lambda v: self.image.set_visibility("show_atom_labels", v))
         self.image_tools.add_visibility("截面线", True, lambda v: self.image.set_visibility("show_line", v))
         self.image_tools.add_visibility("颜色条", True, lambda v: self.image.set_visibility("show_colorbar", v))

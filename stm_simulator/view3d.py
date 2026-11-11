@@ -1,12 +1,13 @@
 """GPU-rendered STM mesh and atoms in a shared Cartesian angstrom frame."""
 import numpy as np
-from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtCore import Qt, QRect, QPoint, QPointF
 from PyQt6.QtWidgets import QWidget
-from PyQt6.QtGui import QVector3D, QFont, QPainter, QColor, QMatrix4x4
+from PyQt6.QtGui import QVector3D, QFont, QPainter, QColor, QMatrix4x4, QImage
 import pyqtgraph.opengl as gl
 from pyqtgraph.opengl import shaders
 from .elements import atom_styles
 from .atoms import GlossyAtoms
+from .legend import paint_atom_legend
 
 AXIS_COLORS = ("#d84444", "#249650", "#397bd0")
 shaders.ShaderProgram("axis_front_lit", [
@@ -69,6 +70,8 @@ class AxisLabels(QWidget):
 
                 painter.setPen(QColor("#243244"))
                 painter.drawText(x, y, text)
+        if view.show_atom_legend:
+            paint_atom_legend(painter, view.volume, self.width(), self.height())
         painter.end()
 
 
@@ -88,6 +91,7 @@ class SurfaceView(gl.GLViewWidget):
         self.show_atoms = True
         self.show_signal = True
         self.show_atom_labels = False
+        self.show_atom_legend = False
         self.atom_labels = []
         self.surface_item = None
         self._fitted = False
@@ -147,6 +151,10 @@ class SurfaceView(gl.GLViewWidget):
         if self.atom_artist is not None:
             self.atom_artist.setVisible(visible)
         self.update()
+
+    def set_atom_legend_visible(self, visible):
+        self.show_atom_legend = visible
+        self.labels_overlay.update()
 
     def set_atom_labels_visible(self, visible):
         self.show_atom_labels = visible
@@ -259,6 +267,20 @@ class SurfaceView(gl.GLViewWidget):
         painter = QPainter(image)
         self.labels_overlay.render(painter)
         painter.end()
+        footer = getattr(self, "axes_footer", None)
+        if footer is not None and footer.isVisible():
+            # Keep the actual footer position and spacing; it is outside the main GL viewport.
+            position = footer.mapTo(self.parentWidget(), QPoint(0, 0))-self.pos()
+            ratio = self.devicePixelRatioF()
+            combined = QImage(int(self.width()*ratio), int(max(self.height(), position.y()+footer.height())*ratio),
+                              QImage.Format.Format_ARGB32_Premultiplied)
+            combined.setDevicePixelRatio(ratio)
+            combined.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(combined)
+            painter.drawImage(QPointF(0, 0), image)
+            painter.drawImage(QPointF(position), footer.transparent_image())
+            painter.end()
+            image = combined
         return image
 
     def _draw_cell(self, lattice):
@@ -320,6 +342,21 @@ class DirectionAxes(gl.GLViewWidget):
         self.labels = DirectionLabels(self)
         view.axes_footer = self
         self.sync_camera()
+
+    def transparent_image(self):
+        self.sync_camera()
+        background = self.opts["bgcolor"]
+        try:
+            self.setBackgroundColor((0, 0, 0, 0))
+            image = self.grabFramebuffer()
+        finally:
+            self.opts["bgcolor"] = background
+            self.update()
+        image.setDevicePixelRatio(self.devicePixelRatioF())
+        painter = QPainter(image)
+        self.labels.render(painter)
+        painter.end()
+        return image
 
     def sync_camera(self):
         self.opts['elevation'] = self.view.opts['elevation']

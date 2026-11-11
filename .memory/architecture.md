@@ -20,3 +20,5 @@ profile_view.ProfilePlot管理选点、屏幕距离命中、坐标读数和透�
 ImageView.atom_depths/atom_opacities基于原始笛卡尔z与所选侧最外层原子位置计算非周期深度，含边界容差1e-8Å，范围外0.2；球面渐变单次绘制以免高光重复叠加改变整体透明度。App加载时设置深度滑条上限为结构厚度，步长0.01Å，参数不影响STM数值。HoverActions.add_visibility支持details嵌入次行控件。
 
 - SurfaceView持有projection_range_enabled/depth/side，创建实际z的GLMesh截止面和边框；重绘重建后仍应用范围，关闭后移除两项并恢复颜色。GlossyAtoms颜色变化清空相机缓存触发排序更新；shader保留指定低alpha=0.2。ImageView.atom_opacities范围外改为0且跳过绘制；App左图原子菜单开关联动右图范围。
+
+- legend.paint_atom_legend为左右图共用图例绘制，按文件顺序去重元素，窄高区域按列布局。左图原子控件作为details竖排两行缩进。DirectionAxes.transparent_image导出透明GL帧并合成DirectionLabels；SurfaceView.transparent_image按实际页脚位置合并方向轴，输出画布相应增高，关闭方向轴时不合成。
