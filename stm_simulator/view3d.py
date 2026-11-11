@@ -54,6 +54,7 @@ class AxisLabels(QWidget):
         if view.show_atom_labels and view.atom_labels:
             pixel_sizes = np.asarray(view.pixelSize(view.atom_positions))
             for index, (position, text) in enumerate(view.atom_labels):
+                painter.setOpacity(float(view.projection_alphas[index]) if view.projection_range_enabled else 1.)
                 point = transform.map(QVector3D(*position))
                 if not (-1 <= point.z() <= 1 and 0 <= point.x() < self.width() and 0 <= point.y() < self.height()):
                     continue
@@ -78,6 +79,11 @@ class SurfaceView(gl.GLViewWidget):
         self.opts["fov"] = 20
         self.setBackgroundColor("#ffffff")
         self.atom_artist = None
+        self.projection_range_enabled = False
+        self.projection_depth = 5.
+        self.projection_side = "top"
+        self.cutoff_items = []
+        self.volume = None
         self.show_cell = True
         self.show_atoms = True
         self.show_signal = True
@@ -96,6 +102,8 @@ class SurfaceView(gl.GLViewWidget):
         super().clear()
         self.atom_artist = None
         self.surface_item = None
+        self.cutoff_items = []
+        self.volume = None
         self._fitted = False
         self.home_camera = None
         self.axis_labels = []
@@ -104,12 +112,14 @@ class SurfaceView(gl.GLViewWidget):
 
     def show_structure(self, volume):
         self.clear()
+        self.volume = volume
         self.atom_positions = volume.positions @ volume.lattice
         elements, self.atom_colors, self.atom_radii = atom_styles(volume)
         self.atom_labels = list(zip(self.atom_positions, elements))
         self.atom_artist = GlossyAtoms(self.atom_positions, self.atom_colors, self.atom_radii)
         self.atom_artist.setVisible(self.show_atoms)
         self.addItem(self.atom_artist)
+        self.update_projection_range()
         cell = np.array([[i, j, k] for i in (0, 1) for j in (0, 1) for k in (0, 1)]) @ volume.lattice
         bounds = np.concatenate((self.atom_positions, cell))
         low, high = bounds.min(axis=0), bounds.max(axis=0)
@@ -147,6 +157,8 @@ class SurfaceView(gl.GLViewWidget):
     def set_data(self, result, volume, plane_height, color_scale):
         fitted = self._fitted
         super().clear()
+        self.cutoff_items = []
+        self.volume = volume
         indices = [np.unique(np.linspace(0, n-1, min(n, 160)).astype(int)) for n in result.shape]
         i, j = np.meshgrid(*indices, indexing="ij")
         xy = np.stack((i/result.shape[0], j/result.shape[1]), axis=-1) @ volume.lattice[:2, :2]
@@ -175,6 +187,7 @@ class SurfaceView(gl.GLViewWidget):
         self.atom_artist = GlossyAtoms(self.atom_positions, self.atom_colors, self.atom_radii)
         self.atom_artist.setVisible(self.show_atoms)
         self.addItem(self.atom_artist)
+        self.update_projection_range()
         cell = np.array([[i, j, k] for i in (0, 1) for j in (0, 1) for k in (0, 1)]) @ volume.lattice
         points = np.concatenate((self.surface_vertices[valid], self.atom_positions, cell))
         low, high = points.min(axis=0), points.max(axis=0)
@@ -186,6 +199,46 @@ class SurfaceView(gl.GLViewWidget):
             self.setCameraPosition(distance=float(np.linalg.norm(span)*1.05*np.tan(np.deg2rad(30))/np.tan(np.deg2rad(10))), elevation=25, azimuth=-55)
             self.home_camera = self.cameraParams().copy()
         self._fitted = True
+        self.update()
+
+    def set_projection_range(self, enabled, depth, side):
+        self.projection_range_enabled = enabled
+        self.projection_depth = depth
+        self.projection_side = side
+        self.update_projection_range()
+
+    def update_projection_range(self):
+        for item in self.cutoff_items:
+            self.removeItem(item)
+        self.cutoff_items = []
+        if self.volume is None or self.atom_artist is None:
+            return
+        colors = self.atom_colors.copy()
+        self.projection_alphas = np.ones(len(colors))
+        if self.projection_range_enabled:
+            z = self.atom_positions[:, 2]
+            top = self.projection_side == "top"
+            surface = float(z.max() if top else z.min())
+            depths = surface-z if top else z-surface
+            self.projection_alphas = np.where(depths <= self.projection_depth+1e-8, 1., .2)
+            colors[:, 3] = self.projection_alphas
+            self.cutoff_z = surface-self.projection_depth if top else surface+self.projection_depth
+            # Horizontal physical plane in the existing 3D view, covering the actual a/b cell.
+            vertices = np.array([[0, 0], [1, 0], [1, 1], [0, 1]]) @ self.volume.lattice[:2, :2]
+            vertices = np.column_stack((vertices, np.full(4, self.cutoff_z))).astype(np.float32)
+            plane = gl.GLMeshItem(vertexes=vertices, faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32),
+                                  color=(.08, .53, .85, .18), smooth=False, computeNormals=False,
+                                  shader=None, glOptions="translucent")
+            outline = gl.GLLinePlotItem(pos=vertices[[0, 1, 2, 3, 0]], color=(.08, .53, .85, .9),
+                                        width=1.5, antialias=True, mode="line_strip")
+            for item in (plane, outline):
+                item.setDepthValue(10)
+                self.addItem(item)
+            self.cutoff_items = [plane, outline]
+        self.atom_artist.colors = colors
+        self.atom_artist._camera = None  # Reapply sorted colors even when the camera has not moved.
+        self.atom_artist.update()
+        self.labels_overlay.update()
         self.update()
 
     def set_cell_visible(self, visible):

@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, QSettings, QSignalBlocker, QRegularExpression, pyqtSignal, QPointF
-from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen, QRegularExpressionValidator, QRadialGradient, QPolygonF
+from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QFont, QLinearGradient, QPen, QRegularExpressionValidator, QRadialGradient
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
     QSplitter, QFileDialog, QMessageBox, QScrollArea, QCheckBox, QProgressBar, QSlider)
@@ -119,8 +119,6 @@ class ImageView(QWidget):
             painter.drawText(bar_x+bar_width+7, bar_y+4, f"{high:.4g}")
             painter.drawText(bar_x+bar_width+7, bar_y+bar_height//2+4, self.color_scale.label)
         self.paint_atoms(painter)
-        if self.show_atoms:
-            self.paint_depth_plane(painter)
         if self.show_line and self.line_points is not None:
             points = []
             for position in self.line_points:
@@ -169,7 +167,7 @@ class ImageView(QWidget):
 
     def atom_opacities(self):
         depths, _ = self.atom_depths()
-        return np.where(depths <= self.atom_depth+1e-8, 1., .2)
+        return np.where(depths <= self.atom_depth+1e-8, 1., 0.)
 
     def paint_atoms(self, painter):
         if not self.show_atoms or self.volume is None:
@@ -188,6 +186,8 @@ class ImageView(QWidget):
         for a in range(0, int(self.repeats[0]), stride):
             for b in range(0, int(self.repeats[1]), stride):
                 for i in order:
+                    if opacities[i] == 0:
+                        continue
                     atom = self.volume.positions[i]
                     xy = ((atom[:2] % 1)+[a, b]) @ self.lattice[:2, :2]
                     px = x+(xy[0]-self.low[0])*sx
@@ -207,38 +207,6 @@ class ImageView(QWidget):
                     if self.show_atom_labels:
                         painter.setPen(QColor("#243244"))
                         painter.drawText(QPointF(px+radius+3, py-3), elements[i])
-        painter.restore()
-
-    def paint_depth_plane(self, painter):
-        if self.volume is None:
-            return
-        depths, surface = self.atom_depths()
-        span = max(float(depths.max()), self.atom_depth, .01)
-        cutoff = surface-self.atom_depth if self.atom_side == "top" else surface+self.atom_depth
-        # Side-view inset: a horizontal cutoff cannot be distinguished in the main top projection.
-        left, top = max(5, self.width()-142), self.height()-76
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setFont(QFont("Microsoft YaHei UI", 8))
-        painter.setPen(QColor("#354b65"))
-        painter.drawText(left, top+12, f"原子范围 {self.atom_depth:.2f} Å")
-        def plane(y):
-            return QPolygonF([QPointF(left+6, y+7), QPointF(left+39, y+7),
-                              QPointF(left+52, y), QPointF(left+19, y)])
-        upper, lower = top+23, top+47
-        fraction = min(1., self.atom_depth/span)
-        middle = upper+fraction*(lower-upper) if self.atom_side == "top" else lower-fraction*(lower-upper)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor("#a3aebc"), .8))
-        painter.drawPolygon(plane(upper))
-        painter.drawPolygon(plane(lower))
-        painter.drawLine(QPointF(left+6, upper+7), QPointF(left+6, lower+7))
-        painter.drawLine(QPointF(left+52, upper), QPointF(left+52, lower))
-        painter.setPen(QPen(QColor("#1686d9"), 1.2))
-        painter.setBrush(QColor(22, 134, 217, 70))
-        painter.drawPolygon(plane(middle))
-        painter.drawText(left+60, top+36, "截止面")
-        painter.drawText(left+60, top+52, f"z={cutoff:.2f} Å")
         painter.restore()
 
     def transparent_image(self):
@@ -441,7 +409,7 @@ class App(QMainWindow):
         self.atom_depth_slider.setValue(500)
         self.atom_depth_slider.setFixedWidth(110)
         self.atom_depth_slider.setEnabled(False)
-        self.atom_depth_slider.setToolTip("从所选表面向内部的深度；范围外原子透明度为0.2")
+        self.atom_depth_slider.setToolTip("从所选表面向内部的深度；左图隐藏范围外原子，右图以0.2透明度显示")
         self.atom_depth_slider.valueChanged.connect(self.change_atom_depth)
         depth_controls = QWidget()
         depth_layout = QHBoxLayout(depth_controls)
@@ -451,7 +419,7 @@ class App(QMainWindow):
         depth_layout.addWidget(self.atom_depth_label)
         depth_layout.addStretch()
         depth_layout.addWidget(self.atom_depth_slider)
-        self.image_tools.add_visibility("原子", False, lambda v: self.image.set_visibility("show_atoms", v), self.atom_size_slider, details=depth_controls)
+        self.projection_atoms_toggle = self.image_tools.add_visibility("原子", False, self.set_projection_atoms_visible, self.atom_size_slider, details=depth_controls)
         self.image_tools.add_visibility("原子标签", False, lambda v: self.image.set_visibility("show_atom_labels", v))
         self.image_tools.add_visibility("截面线", True, lambda v: self.image.set_visibility("show_line", v))
         self.image_tools.add_visibility("颜色条", True, lambda v: self.image.set_visibility("show_colorbar", v))
@@ -753,13 +721,22 @@ class App(QMainWindow):
         if self.image.line_points is not None:
             self.update_profile(*self.image.line_points)
 
+    def set_projection_atoms_visible(self, visible):
+        self.image.set_visibility("show_atoms", visible)
+        self.sync_projection_range()
+
+    def sync_projection_range(self):
+        self.surface.set_projection_range(self.image.show_atoms, self.image.atom_depth, self.image.atom_side)
+
     def change_atom_depth(self, value):
         self.image.set_atom_depth(value)
         self.atom_depth_label.setText(f"{value/100:.2f} Å")
+        self.sync_projection_range()
 
     def update_atom_side(self):
         self.image.atom_side = "top" if self.side.currentIndex() == 0 else "bottom"
         self.image.update()
+        self.sync_projection_range()
 
     def set_line_mode(self, enabled):
         self.image.line_enabled = enabled
