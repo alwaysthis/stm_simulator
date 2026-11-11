@@ -29,7 +29,7 @@ class ProfileTests(unittest.TestCase):
             self.assertAlmostEqual(window.profile_distance[-1], np.linalg.norm(end-start))
             window.close()
 
-    def test_missing_data_produces_gaps_and_reset_closes_profile(self):
+    def test_missing_data_gaps_and_reset_preserves_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             window = App(Path(directory)/"settings.ini")
             volume = Volume(np.diag([10., 10., 30.]), np.array([[.5, .5, .3]]), np.zeros((20, 20, 2)), "test")
@@ -41,5 +41,34 @@ class ProfileTests(unittest.TestCase):
             self.assertTrue(np.isnan(window.profile_values).any())
             self.assertTrue(np.isfinite(window.profile_values).any())
             window.image.reset_view()
+            self.assertFalse(window.profile_panel.isHidden())
+            window.image.clear_line()
             self.assertTrue(window.profile_panel.isHidden())
             window.close()
+
+    def test_selection_coordinates_and_transparent_profile_export(self):
+        from stm_simulator.profile_view import ProfilePlot
+        from PyQt6.QtCore import QPointF, Qt
+        plot = ProfilePlot()
+        plot.resize(600, 220)
+        plot.show()
+        plot.plot([0., 1., 2.], [2., 3., 2.])
+        plot.set_samples(np.array([0., 1., 2.]), np.array([2., 3., 2.]))
+        self.app.processEvents()
+        plot.autoRange()
+        position = plot.plotItem.vb.mapViewToScene(QPointF(1., 3.))
+        class Click:
+            def button(self): return Qt.MouseButton.LeftButton
+            def scenePos(self): return position
+        plot.pick_point(Click())
+        self.assertEqual(plot.selection, 1)
+        self.assertIn("3", plot.annotation.toPlainText())
+        texts = []
+        plot.position_changed.connect(texts.append)
+        plot.track_mouse(position)
+        self.assertTrue(texts[-1].startswith("x  1"))
+        plot.set_coordinates_visible(False)
+        self.assertEqual(texts[-1], "")
+        image = plot.transparent_image()
+        self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
+        plot.close()

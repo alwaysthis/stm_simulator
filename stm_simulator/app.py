@@ -13,15 +13,22 @@ from .widgets import ChevronComboBox, NumericBox, DragSlider
 from .view3d import SurfaceView, DirectionAxes
 from .colors import ColorScale, PALETTES
 from .plot_tools import HoverActions
+from .profile_view import ProfilePlot
+from .elements import atom_styles
 import pyqtgraph as pg
 from scipy.ndimage import map_coordinates
 
 STYLE = """
-QMainWindow, QWidget {background:#f1f4f8;color:#243244;font-family:'Microsoft YaHei UI';font-size:13px;}
+QMainWindow, QWidget {background:#ffffff;color:#243244;font-family:'Microsoft YaHei UI';font-size:13px;}
 QFrame#panel {background:#ffffff;border:1px solid #d9e1eb;border-radius:8px;}
 QFrame#card {background:#ffffff;border:1px solid #d9e1eb;border-radius:4px;}
 QLabel {background:transparent;border:none;}
 QLabel#muted {color:#627187;}
+QCheckBox {spacing:7px;}
+QCheckBox::indicator {width:14px;height:14px;border:1px solid #354b65;border-radius:3px;background:white;}
+QCheckBox::indicator:checked {background:#3979bd;border:2px solid #243244;image:url(__CHECK_ICON__);}
+QCheckBox::indicator:disabled {border-color:#7f8b99;}
+
 QPushButton {background:#e3e9f1;border:1px solid #c8d2df;border-radius:4px;padding:6px 12px;}
 QPushButton:hover {background:#d7e4f3;border-color:#4a90d9;}
 QPushButton:pressed {background:#c3d5eb;}
@@ -51,8 +58,10 @@ QSlider::sub-page:horizontal:disabled {background:#c8d2df;}
 QSlider::handle:horizontal:disabled {background:#a4afbd;}
 QProgressBar {border:1px solid #c8d2df;border-radius:4px;text-align:center;min-height:18px;}
 QProgressBar::chunk {background:#3979bd;border-radius:3px;}
-QSplitter::handle {background:#f1f4f8;width:8px;}
+QSplitter::handle {background:#ffffff;width:8px;}
 """
+
+STYLE = STYLE.replace("__CHECK_ICON__", (Path(__file__).parent / "assets/check.svg").as_posix())
 
 class ImageView(QWidget):
     line_changed = pyqtSignal(object, object)
@@ -65,11 +74,19 @@ class ImageView(QWidget):
         self.setMouseTracking(True)
         self.readout = readout
         self.pixels = self.image = self.result = None
-        self.setMinimumSize(350, 300)
+        self.exporting = False
+        self.show_colorbar = True
+        self.show_line = True
+        self.show_atoms = False
+        self.show_atom_labels = False
+        self.atom_scale = 1.
+        self.volume = None
+        self.setMinimumSize(220, 160)
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#ffffff"))
+        if not self.exporting:
+            painter.fillRect(self.rect(), QColor("#ffffff"))
         if self.image is None:
             painter.setPen(QColor("#808080"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,"打开 PARCHG 文件开始模拟")
@@ -81,22 +98,24 @@ class ImageView(QWidget):
         self.rect_image = (x, y, width, height)
         painter.drawPixmap(x, y, width, height, QPixmap.fromImage(self.image))
         painter.setPen(QColor("#627187"))
-        painter.drawText(max(x, 160), y+height+22, "x / y (Å)")
-        bar_x, bar_y = 18, self.height()-66
-        bar_width, bar_height = 10, 50
-        gradient = QLinearGradient(bar_x, bar_y+bar_height, bar_x, bar_y)
-        levels = np.linspace(self.color_scale.low, self.color_scale.high, 65)
-        for stop, rgba in zip(np.linspace(0, 1, 65), self.color_scale.rgba(levels)):
-            gradient.setColorAt(float(stop), QColor.fromRgbF(*rgba))
-        painter.fillRect(bar_x, bar_y, bar_width, bar_height, gradient)
-        painter.setPen(QColor("#526174"))
-        painter.drawRect(bar_x, bar_y, bar_width, bar_height)
-        low = self.color_scale.display_value(self.color_scale.low)
-        high = self.color_scale.display_value(self.color_scale.high)
-        painter.drawText(bar_x+bar_width+7, bar_y+bar_height+4, f"{low:.4g}")
-        painter.drawText(bar_x+bar_width+7, bar_y+4, f"{high:.4g}")
-        painter.drawText(bar_x+bar_width+7, bar_y+bar_height//2+4, self.color_scale.label)
-        if self.line_points is not None:
+
+        if self.show_colorbar:
+            bar_x, bar_y = 18, self.height()-66
+            bar_width, bar_height = 10, 50
+            gradient = QLinearGradient(bar_x, bar_y+bar_height, bar_x, bar_y)
+            levels = np.linspace(self.color_scale.low, self.color_scale.high, 65)
+            for stop, rgba in zip(np.linspace(0, 1, 65), self.color_scale.rgba(levels)):
+                gradient.setColorAt(float(stop), QColor.fromRgbF(*rgba))
+            painter.fillRect(bar_x, bar_y, bar_width, bar_height, gradient)
+            painter.setPen(QColor("#526174"))
+            painter.drawRect(bar_x, bar_y, bar_width, bar_height)
+            low = self.color_scale.display_value(self.color_scale.low)
+            high = self.color_scale.display_value(self.color_scale.high)
+            painter.drawText(bar_x+bar_width+7, bar_y+bar_height+4, f"{low:.4g}")
+            painter.drawText(bar_x+bar_width+7, bar_y+4, f"{high:.4g}")
+            painter.drawText(bar_x+bar_width+7, bar_y+bar_height//2+4, self.color_scale.label)
+        self.paint_atoms(painter)
+        if self.show_line and self.line_points is not None:
             points = []
             for position in self.line_points:
                 fraction = (position-self.low)/(self.high-self.low)
@@ -117,10 +136,57 @@ class ImageView(QWidget):
         return self.low+np.array([u, v])*(self.high-self.low)
 
     def reset_view(self):
+        self.update()  # The STM image always fits its panel; preserve the selected profile.
+
+    def clear_line(self):
         self.line_points = None
         self.drawing_line = False
         self.line_cleared.emit()
         self.update()
+
+    def set_visibility(self, name, visible):
+        setattr(self, name, visible)
+        self.update()
+
+    def set_atom_scale(self, value):
+        self.atom_scale = value/100
+        self.update()
+
+    def paint_atoms(self, painter):
+        if not self.show_atoms or self.volume is None:
+            return
+        x, y, width, height = self.rect_image
+        elements, colors, radii = atom_styles(self.volume)
+        # Iterate only translations intersecting the displayed area. The painter clips at its bounds.
+        painter.save()
+        painter.setClipRect(x, y, width, height)
+        sx, sy = np.array([width, height])/(self.high-self.low)
+        stride = max(1, int(np.ceil(np.sqrt(len(elements)*float(np.prod(self.repeats))/50000))))
+        for a in range(0, int(self.repeats[0]), stride):
+            for b in range(0, int(self.repeats[1]), stride):
+                for i, atom in enumerate(self.volume.positions):
+                    xy = ((atom[:2] % 1)+[a, b]) @ self.lattice[:2, :2]
+                    px = x+(xy[0]-self.low[0])*sx
+                    py = y+height-(xy[1]-self.low[1])*sy
+                    radius = max(1., float(radii[i])*min(sx, sy)*self.atom_scale*.35)
+                    painter.setBrush(QColor.fromRgbF(*colors[i]))
+                    painter.setPen(QPen(QColor("#354b65"), .7))
+                    painter.drawEllipse(QPointF(px, py), radius, radius)
+                    if self.show_atom_labels:
+                        painter.setPen(QColor("#243244"))
+                        painter.drawText(QPointF(px+radius+3, py-3), elements[i])
+        painter.restore()
+
+    def transparent_image(self):
+        image = QImage(self.size()*self.devicePixelRatioF(), QImage.Format.Format_ARGB32_Premultiplied)
+        image.setDevicePixelRatio(self.devicePixelRatioF())
+        image.fill(Qt.GlobalColor.transparent)
+        self.exporting = True
+        try:
+            self.render(image, flags=QWidget.RenderFlag.DrawChildren)
+        finally:
+            self.exporting = False
+        return image
 
     def mousePressEvent(self, event):
         if self.line_enabled and event.button() == Qt.MouseButton.LeftButton:
@@ -184,9 +250,8 @@ class ImageView(QWidget):
         fractional=np.stack([xx,yy],axis=-1) @ np.linalg.inv(lattice[:2,:2])
         mask=np.all((fractional>=0)&(fractional<=repeats),axis=-1)
         ij=np.clip(((fractional % 1)*np.array(result.shape)).astype(int),0,np.array(result.shape)-1)
-        self.pixels=np.ascontiguousarray(rgb[ij[:,:,0],ij[:,:,1]])
-        self.pixels[~mask]=[255,255,255]
-        self.image=QImage(self.pixels.data,shape[0],shape[1],shape[0]*3,QImage.Format.Format_RGB888).copy()
+        self.pixels=np.ascontiguousarray(np.dstack((rgb[ij[:,:,0],ij[:,:,1]], mask.astype(np.uint8)*255)))
+        self.image=QImage(self.pixels.data,shape[0],shape[1],shape[0]*4,QImage.Format.Format_RGBA8888).copy()
         self.update()
 
 class App(QMainWindow):
@@ -216,13 +281,12 @@ class App(QMainWindow):
         self.line_button = QPushButton("截面线")
         self.line_button.setCheckable(True)
         self.line_button.toggled.connect(self.set_line_mode)
-        toolbar.addWidget(self.line_button)
-        toolbar.addStretch();state=QLabel("●  离线分析");state.setStyleSheet("color:#39835d");toolbar.addWidget(state)
+        toolbar.addStretch()
         layout.addLayout(toolbar)
         body=QHBoxLayout();body.setSpacing(8);layout.addLayout(body,1)
         split=QSplitter();body.addWidget(split,1)
-        view=QWidget();view.setStyleSheet("background:#f5f7fa;")
-        view_layout=QVBoxLayout(view);view_layout.setContentsMargins(24,10,24,10)
+        view=QWidget()
+        view_layout=QVBoxLayout(view);view_layout.setContentsMargins(8,6,8,6)
         self.summary=QLabel("等待数据");self.summary.setObjectName("muted");view_layout.addWidget(self.summary)
         self.readout=QLabel("x  —     y  —     值  —");self.readout.setObjectName("muted")
         self.plots = plots = QSplitter()
@@ -236,11 +300,12 @@ class App(QMainWindow):
         for field, direction in ((self.tiles_a, "a"), (self.tiles_b, "b")):
             field.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]*"), field))
             field.setToolTip(f"{direction}方向重复数量，输入正整数后按回车")
-            field.setMaximumWidth(85)
+            field.setFixedWidth(48)
             field.editingFinished.connect(self.refresh_colors)
         map_header.addWidget(self.tiles_a)
         map_header.addWidget(QLabel("×"))
         map_header.addWidget(self.tiles_b)
+        map_header.addWidget(self.line_button)
         map_header.addStretch()
         map_layout.addLayout(map_header)
         self.image = ImageView(self.readout)
@@ -251,24 +316,14 @@ class App(QMainWindow):
         surface_panel = QWidget()
         surface_layout = QVBoxLayout(surface_panel)
         surface_layout.setContentsMargins(0, 0, 0, 0)
-        surface_header = QVBoxLayout()
-        self.atoms_toggle = QCheckBox("显示原子")
-        self.atoms_toggle.setChecked(True)
-        surface_header.addWidget(self.atoms_toggle)
-        self.atom_labels_toggle = QCheckBox("原子种类标签")
-        self.atom_labels_toggle.setToolTip("在原子位置旁显示元素符号")
-        surface_header.addWidget(self.atom_labels_toggle)
-        self.signal_layer_toggle = QCheckBox("显示信号层")
-        self.signal_layer_toggle.setChecked(True)
-        surface_header.addWidget(self.signal_layer_toggle)
-        surface_layout.addLayout(surface_header)
         self.surface = SurfaceView()
         self.surface.setMinimumWidth(170)
-        self.atoms_toggle.toggled.connect(self.surface.set_atoms_visible)
-        self.signal_layer_toggle.toggled.connect(self.surface.set_signal_visible)
-        self.atom_labels_toggle.toggled.connect(self.surface.set_atom_labels_visible)
         surface_layout.addWidget(self.surface, 1)
-        surface_layout.addWidget(DirectionAxes(self.surface))
+        self.direction_axes = DirectionAxes(self.surface)
+        footer = QHBoxLayout()
+        footer.addWidget(self.direction_axes)
+        footer.addStretch()
+        surface_layout.addLayout(footer)
         plots.addWidget(surface_panel)
         plots.setStretchFactor(0, 3)
         plots.setStretchFactor(1, 1)
@@ -279,12 +334,15 @@ class App(QMainWindow):
         profile_header = QHBoxLayout()
         profile_header.addWidget(QLabel("截面图"))
         profile_header.addStretch()
+        self.profile_position = QLabel("")
+        profile_header.addWidget(self.profile_position)
         close_profile = QPushButton("关闭")
-        close_profile.clicked.connect(self.image.reset_view)
+        close_profile.clicked.connect(self.image.clear_line)
         profile_header.addWidget(close_profile)
         profile_layout.addLayout(profile_header)
-        self.profile_plot = pg.PlotWidget(background="white")
-        self.profile_plot.setMinimumHeight(120)
+        self.profile_plot = ProfilePlot()
+        self.profile_plot.position_changed.connect(self.profile_position.setText)
+        self.profile_plot.setMinimumHeight(170)
         self.profile_plot.setMenuEnabled(False)
         self.profile_plot.hideButtons()
         self.profile_plot.setLabel("bottom", "沿线距离", units="Å")
@@ -303,6 +361,24 @@ class App(QMainWindow):
         self.image_tools = HoverActions(self.image, self.image.reset_view, "stm.png")
         self.surface_tools = HoverActions(self.surface, self.surface.reset_view, "stm_3d.png")
         self.profile_tools = HoverActions(self.profile_plot, self.profile_plot.autoRange, "profile.png")
+        self.atoms_toggle = self.surface_tools.add_visibility("原子", True, self.surface.set_atoms_visible)
+        self.atom_labels_toggle = self.surface_tools.add_visibility("原子标签", False, self.surface.set_atom_labels_visible)
+        self.signal_layer_toggle = self.surface_tools.add_visibility("信号层", True, self.surface.set_signal_visible)
+        self.surface_tools.add_visibility("晶胞", True, self.surface.set_cell_visible)
+        self.surface_tools.add_visibility("方向轴", True, self.direction_axes.setVisible)
+        self.atom_size_slider = DragSlider(Qt.Orientation.Horizontal)
+        self.atom_size_slider.setRange(10, 300)
+        self.atom_size_slider.setValue(100)
+        self.atom_size_slider.setFixedWidth(110)
+        self.atom_size_slider.setToolTip("投影原子大小：0.1–3倍")
+        self.atom_size_slider.valueChanged.connect(self.image.set_atom_scale)
+        self.image_tools.add_visibility("原子", False, lambda v: self.image.set_visibility("show_atoms", v), self.atom_size_slider)
+        self.image_tools.add_visibility("原子标签", False, lambda v: self.image.set_visibility("show_atom_labels", v))
+        self.image_tools.add_visibility("截面线", True, lambda v: self.image.set_visibility("show_line", v))
+        self.image_tools.add_visibility("颜色条", True, lambda v: self.image.set_visibility("show_colorbar", v))
+        self.profile_tools.add_visibility("曲线", True, self.profile_curve.setVisible)
+        self.profile_tools.add_visibility("选点标注", True, self.profile_plot.set_points_visible)
+        self.profile_tools.add_visibility("鼠标坐标", True, self.profile_plot.set_coordinates_visible)
         split.addWidget(view)
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setMinimumWidth(290);scroll.setMaximumWidth(360)
         panel=QFrame();panel.setObjectName("panel");scroll.setWidget(panel);split.addWidget(scroll);split.setSizes([900,300])
@@ -471,8 +547,8 @@ class App(QMainWindow):
             self.settings.sync()
         if hasattr(self, "height_map"):
             del self.height_map
-        self.image.reset_view()
-        self.volume=volume;self.result=None;self.image.image=None;self.image.update()
+        self.image.clear_line()
+        self.volume=volume;self.image.volume=volume;self.result=None;self.image.image=None;self.image.update()
         self.file_label.setText(f"{volume.name}\n网格  {volume.values.shape}\n原子  {len(volume.positions)}")
         self.update_slider_ranges()
         self.surface.show_structure(volume)
@@ -536,7 +612,7 @@ class App(QMainWindow):
         self.result,self.plane_height=output;self.parameters=parameters
         finite=self.result[np.isfinite(self.result)]
         if not finite.size:
-            self.result=None;self.image.reset_view();self.image.image=None;self.image.update();self.surface.show_structure(self.volume);self.status.setText("没有有效交点：起始密度必须低于阈值，请检查数据、阈值和搜索范围");return
+            self.result=None;self.image.clear_line();self.image.image=None;self.image.update();self.surface.show_structure(self.volume);self.status.setText("没有有效交点：起始密度必须低于阈值，请检查数据、阈值和搜索范围");return
         self.unit="Å" if parameters["mode"]=="current" else "raw density"
         self.summary.setText(f"{'恒流' if parameters['mode'] == 'current' else ('高度文件' if parameters['mode'] == 'height_map' else '恒高')}    |    {parameters['engine']}    |    {finite.min():.5g} — {finite.max():.5g} {self.unit}")
         self.status.setText(f"完成    ·    起伏 {np.ptp(finite):.5g} {self.unit}    ·    无交点 {100*np.isnan(self.result).mean():.1f}%")
@@ -612,6 +688,7 @@ class App(QMainWindow):
         self.profile_distance = distance
         self.profile_values = self.color_scale.display_value(values)
         self.profile_curve.setData(distance, self.profile_values)
+        self.profile_plot.set_samples(distance, self.profile_values)
         self.profile_plot.setLabel("left", self.color_scale.label)
         if self.profile_panel.isHidden() and not self.image.drawing_line:
             self.profile_panel.show()

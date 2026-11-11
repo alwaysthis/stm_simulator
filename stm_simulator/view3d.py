@@ -65,7 +65,7 @@ class AxisLabels(QWidget):
                 x = max(2, x)
                 y = int(np.clip(point.y()-radius-3, metrics.height(), self.height()-3))
                 rect = QRect(x-2, y-metrics.ascent()-2, metrics.horizontalAdvance(text)+6, metrics.height()+2)
-                painter.fillRect(rect, QColor(255, 255, 255, 220))
+
                 painter.setPen(QColor("#243244"))
                 painter.drawText(x, y, text)
         painter.end()
@@ -76,8 +76,9 @@ class SurfaceView(gl.GLViewWidget):
         super().__init__()
         self.setMinimumSize(170, 220)
         self.opts["fov"] = 20
-        self.setBackgroundColor("#f5f7fa")
+        self.setBackgroundColor("#ffffff")
         self.atom_artist = None
+        self.show_cell = True
         self.show_atoms = True
         self.show_signal = True
         self.show_atom_labels = False
@@ -187,6 +188,26 @@ class SurfaceView(gl.GLViewWidget):
         self._fitted = True
         self.update()
 
+    def set_cell_visible(self, visible):
+        self.show_cell = visible
+        if hasattr(self, "cell_item"):
+            self.cell_item.setVisible(visible)
+        self.update()
+
+    def transparent_image(self):
+        background = self.opts["bgcolor"]
+        try:
+            self.setBackgroundColor((0, 0, 0, 0))
+            image = self.grabFramebuffer()
+        finally:
+            self.opts["bgcolor"] = background
+            self.update()
+        image.setDevicePixelRatio(self.devicePixelRatioF())
+        painter = QPainter(image)
+        self.labels_overlay.render(painter)
+        painter.end()
+        return image
+
     def _draw_cell(self, lattice):
         vertices = np.array([[i, j, k] for i in (0, 1) for j in (0, 1) for k in (0, 1)])
         segments = []
@@ -197,8 +218,10 @@ class SurfaceView(gl.GLViewWidget):
                     neighbor[axis] = 1
                     segments.extend((vertex @ lattice, neighbor @ lattice))
         self.cell_edges = np.asarray(segments, dtype=np.float32)
-        self.addItem(gl.GLLinePlotItem(pos=self.cell_edges, mode="lines",
-                                      color=(.18, .23, .3, 1), width=1, antialias=True))
+        self.cell_item = gl.GLLinePlotItem(pos=self.cell_edges, mode="lines",
+                                      color=(.18, .23, .3, 1), width=1, antialias=True)
+        self.cell_item.setVisible(self.show_cell)
+        self.addItem(self.cell_item)
 
     def _draw_axes(self, low, high, span):
         self.axis_labels = []
@@ -220,8 +243,8 @@ class DirectionAxes(gl.GLViewWidget):
     def __init__(self, view):
         super().__init__()
         self.view = view
-        self.setFixedHeight(90)
-        self.setBackgroundColor("#f5f7fa")
+        self.setFixedSize(64, 64)
+        self.setBackgroundColor("#ffffff")
         self.opts['fov'] = 25
         self.opts['distance'] = 10.
         self.opts['center'] = QVector3D(.3, .3, .3)
